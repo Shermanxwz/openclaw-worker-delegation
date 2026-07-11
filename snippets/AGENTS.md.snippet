@@ -1,0 +1,47 @@
+<!--
+  Paste this block into your AGENTS.md (or equivalent project rules file).
+  Replace <strong-model> and <worker-model> with the pair you actually run.
+-->
+
+## Model-aware worker delegation
+
+Before doing heavy work, check the current runtime model.
+
+- If main is on **<strong-model>** (planner/reviewer) → delegate body-work to **<worker-model>** (cheap worker).
+- If main has already fallen back to **<worker-model>** → do the work directly. Don't spawn a same-model shadow worker for serial work.
+- Spawn a worker while already on the cheap model **only** for parallelism, isolation, long background runs, or clearly separable subproblems.
+
+### Delegate when on the strong model
+
+- Writing or modifying scripts, code, or configs.
+- Fixing shell/Python quoting, fragile command syntax, or parse errors.
+- Batch reading files, scanning repositories, grepping large trees.
+- Analyzing or compressing long logs.
+- Audits, multi-step research, issue triage, scouting.
+- Build/test loops where retries are likely.
+
+### Do it in main when
+
+- It's a simple Q&A or one short read.
+- A single low-risk command or a one-line verification.
+- A tiny deterministic edit that's easy to confirm.
+- Main is already on the worker model and there's no parallelism/isolation win.
+
+### Worker brief, minimum viable
+
+```
+Objective: <exact outcome in one line>
+Scope:     <files / dirs / systems allowed>
+Do not:    <destructive or external actions without approval>
+Context:   <minimal facts needed>
+Output:    <summary + changed files / commands / tests>
+Verify:    <specific test / lint / build / inspection>
+```
+
+### Failure rule
+
+If main has **two consecutive** patch/command failures on the same problem:
+
+1. Stop direct trial-and-error.
+2. If currently on the strong model → delegate to the worker.
+3. If already on the worker model → change strategy: isolate a smaller subproblem, build a scratch reproduction, or spawn only when you need isolation/parallelism.
