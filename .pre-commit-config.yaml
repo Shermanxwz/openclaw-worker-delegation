@@ -1,0 +1,67 @@
+# Pre-commit hooks for openclaw-worker-delegation.
+#
+# Conservative on purpose: we only use hooks that are either:
+#   - bundled with pre-commit itself (no extra install), or
+#   - the well-known gitleaks pre-commit hook.
+# We deliberately avoid obscure or rarely-installed hooks.
+#
+# The simple text / markdown / YAML checks are implemented as small
+# Python scripts in scripts/pre-commit-hooks/. Each script takes a list
+# of file paths on argv and exits non-zero on the first problem.
+# This keeps the YAML in this file small and easy to audit.
+#
+# Install:
+#   pip install pre-commit
+#   pre-commit install
+# Run on demand:
+#   pre-commit run --all-files
+
+repos:
+  - repo: local
+    hooks:
+      - id: trim-trailing-whitespace
+        name: Trim trailing whitespace
+        description: Strips trailing whitespace from each line of text files.
+        entry: python3 scripts/pre-commit-hooks/trim-trailing-whitespace.py
+        language: system
+        types: [text]
+
+      - id: ensure-eof-newline
+        name: Ensure files end with a newline
+        description: Adds a final newline when missing.
+        entry: python3 scripts/pre-commit-hooks/ensure-eof-newline.py
+        language: system
+        types: [text]
+
+      - id: check-merge-conflict
+        name: Check for merge conflict markers
+        description: Fails if any <<<<<<< / ======= / >>>>>>> markers are present.
+        entry: python3 scripts/pre-commit-hooks/check-merge-conflict.py
+        language: system
+        types: [text]
+
+      - id: check-yaml
+        name: Validate YAML files
+        description: Parses YAML; falls back to a structural check if pyyaml is missing.
+        entry: python3 scripts/pre-commit-hooks/check-yaml.py
+        language: system
+        types: [yaml]
+
+      - id: markdown-sanity
+        name: Markdown sanity (heading + balanced fences)
+        description: Each .md file should have at least one heading and balanced fenced code blocks.
+        entry: python3 scripts/pre-commit-hooks/markdown-sanity.py
+        language: system
+        types: [markdown]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+        name: gitleaks (protect staged)
+        description: Scan staged changes for secrets with gitleaks.
+        # `protect --staged` is the documented pre-commit mode: it scans
+        # the staged changes only, so the hook stays fast on every commit.
+        # CI runs the deeper full-history scan.
+        entry: gitleaks protect --staged --redact --no-banner
+        language: golang

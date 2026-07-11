@@ -1,6 +1,16 @@
 ---
 name: model-aware-worker-delegation
 description: Route work between the main session and a cheap worker based on the current model and task type. Keeps the strong model's context clean for planning and avoids spawning same-model shadow workers when the main session has already fallen back to the worker model.
+license: MIT
+compatibility: openclaw, opencode, generic-agent-loop
+metadata:
+  version: "0.1.1"
+  category: routing
+  audience: agent-runtime
+  strong-model: configurable
+  worker-model: configurable
+  workflow: model-aware-delegation
+  tags: delegation,cost-control,routing,worker-pattern,failure-recovery
 ---
 
 # Model-aware worker delegation
@@ -13,6 +23,21 @@ The exact models are configurable. By default we assume:
 - **Weak (body-work worker)**: MiniMax-M3-class or similar cheap model.
 
 Substitute your own strong/weak pair; the rules transfer.
+
+## Pre-flight checklist
+
+Run through this before every spawn decision. The full decision flow is below; this is the compressed version.
+
+- [ ] **I know which model the main session is on** (check `session_status` or the runtime header). If unknown, get this first; do not guess.
+- [ ] **I can write the task's Objective in one line.** If I cannot, the brief is not ready — split the task or sharpen it.
+- [ ] **The task is genuinely heavy** (code edits, scans, long logs, retry loops, multi-step research). If it is light, do it in main.
+- [ ] **If delegating, the brief includes every field** (Objective / Scope / Do not / Context / Output / Verify / Model / Risk). No Verify, no spawn.
+- [ ] **The worker model is *not* the same as the main session's active model** — unless the brief explicitly justifies the exception (parallelism, isolation, long background, cleanly separable subproblem).
+- [ ] **Main will not duplicate the worker's work** while the worker runs. Main may plan, risk-check, or prep the review only.
+- [ ] **I have a budget in mind** (max steps / wall time / tokens) so a failing worker cannot loop forever.
+- [ ] **I have a failure rule ready**: two consecutive failures on the same problem triggers a strategy change, not a third retry.
+
+If any box is unchecked, fix it before spawning. The rest of this skill is the long-form version of the same rules.
 
 ## Core rule
 
@@ -71,9 +96,22 @@ Do not:    <destructive or external actions without approval>
 Context:   <minimal facts needed>
 Output:    <summary + changed files / commands / tests>
 Verify:    <specific test / lint / build / inspection to run>
+Model:     <strong-model> for planning; <worker-model> as the worker
+Risk:      <low | medium | high — with a one-line reason>
 ```
 
 Full template and rationale: see `examples/worker-brief-template.md`.
+
+## Cost & routing verification
+
+A few quick signals to watch for during a run, before the bill arrives:
+
+- The main session's active model equals the worker model across many turns → main has fallen back; do not spawn same-model workers for serial work.
+- The worker's `Model:` field differs from the brief's expected model → the worker used a fallback. Re-brief with a tighter pin or budget for the drift.
+- The brief is longer than the worker's output → the task was light; you over-delegated.
+- Two consecutive failures on the same problem → apply the failure rule, do not retry the same way.
+
+For the full version — why model name may not equal billing source, which signals are observable from inside the session, and the verification checklist — see `docs/cost-routing.md`.
 
 ## Default posture
 

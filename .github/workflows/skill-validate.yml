@@ -1,0 +1,196 @@
+name: skill-validate
+
+# Validates the OpenClaw skill structure in this repo in a practical,
+# dependency-light way. No external linter is required for the default
+# behaviour; optional steps use widely available tools.
+#
+# Fallback policy:
+# - All checks run on a stock Ubuntu runner with Python 3 and bash.
+# - The YAML / frontmatter / name & description / file-presence checks
+#   use plain Python, so they always run.
+# - The optional `skill-creator audit` and `markdown-link-check` jobs
+#   are guarded: they only run when the relevant tool is preinstalled
+#   on the runner (they currently are NOT installed by default, so
+#   they are skipped with a notice, not failed).
+# - If a future maintainer wants stricter checks, add them as separate
+#   guarded steps and document them in docs/maintenance.md.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "skills/**"
+      - "snippets/**"
+      - ".github/workflows/skill-validate.yml"
+  pull_request:
+    paths:
+      - "skills/**"
+      - "snippets/**"
+      - ".github/workflows/skill-validate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  skill-structure:
+    name: Skill structure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check skill directory layout
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re, sys, pathlib
+
+          root = pathlib.Path("skills")
+          assert root.is_dir(), "skills/ directory missing"
+
+          skill_dirs = sorted(p for p in root.iterdir() if p.is_dir())
+          assert skill_dirs, "no skills/* directories found"
+
+          # Each skill must contain SKILL.md
+          for d in skill_dirs:
+              md = d / "SKILL.md"
+              assert md.is_file(), f"missing {md}"
+
+          # Frontmatter: must start with '---' line, contain name & description.
+          name_re = re.compile(r"^name:\s*([a-z0-9][a-z0-9\-]+)\s*$", re.MULTILINE)
+          desc_re = re.compile(r"^description:\s*(.+)$", re.MULTILINE)
+          name_line_re = re.compile(r"^name:\s*[a-z0-9][a-z0-9\-]+\s*$", re.MULTILINE)
+          forbidden_names = {"anthropic", "claude", "openai", "gpt", "codex", "minimax"}
+          warned = False
+
+          for d in skill_dirs:
+              text = (d / "SKILL.md").read_text(encoding="utf-8")
+              assert text.startswith("---\n"), f"{d}/SKILL.md missing leading '---' frontmatter"
+              parts = text.split("\n---\n", 1)
+              assert len(parts) == 2, f"{d}/SKILL.md frontmatter not closed by a '---' line"
+              fm, _body = parts
+              m_name = name_re.search(fm)
+              m_desc = desc_re.search(fm)
+              assert m_name, f"{d}/SKILL.md frontmatter missing 'name:'"
+              assert m_desc, f"{d}/SKILL.md frontmatter missing 'description:'"
+              name = m_name.group(1)
+              # directory should match the skill name
+              assert name == d.name, f"frontmatter name '{name}' != directory '{d.name}'"
+              desc = m_desc.group(1).strip()
+              # OpenClaw skill descriptions should be non-empty and not absurdly long
+              assert 10 <= len(desc) <= 500, f"{d}/SKILL.md description length out of range: {len(desc)}"
+              # Soft warning on vendor-locked naming (not a hard fail)
+              if any(v in name.lower() for v in forbidden_names):
+                  print(f"::warning::{d.name}: skill name contains a vendor token; consider a generic name")
+                  warned = True
+
+          print(f"OK: validated {len(skill_dirs)} skill(s)")
+          PY
+
+      - name: Check for hard-coded secrets / private hosts
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re, pathlib, sys
+
+          # Lightweight scanner: catches obvious private hosts and credential
+          # shapes. This is NOT a replacement for gitleaks; the secret-scan
+          # workflow covers that. This is a structural guardrail.
+          patterns = [
+              ("private-ipv4", re.compile(r"\b(?:10|127|192\.168|172\.(?:1[6-9]|2\d|3[0-1]))\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")),
+              ("private-host-suffix", re.compile(r"\b[a-z0-9\-]+\.(?:internal|corp|lan|home|local)\b", re.IGNORECASE)),
+              ("aws-key-shape", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+              ("pem-block", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----")),
+          ]
+          exts = {".md", ".yaml", ".yml", ".json", ".sh", ".py", ".txt"}
+          roots = [pathlib.Path("skills"), pathlib.Path("snippets"), pathlib.Path("examples"), pathlib.Path("docs"), pathlib.Path("README.md")]
+          found = []
+          for root in roots:
+              if root.is_file():
+                  files = [root]
+              elif root.is_dir():
+                  files = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in exts]
+              else:
+                  continue
+              for f in files:
+                  try:
+                      text = f.read_text(encoding="utf-8")
+                  except Exception:
+                      continue
+                  for label, pat in patterns:
+                      for m in pat.finditer(text):
+                          found.append((str(f), label, m.group(0)))
+          if found:
+              for f, label, snippet in found:
+                  print(f"FAIL: {f}: matched {label}: {snippet[:60]}")
+              sys.exit(1)
+          print("OK: no obvious private hosts or credential shapes found")
+          PY
+
+  snippets-shape:
+    name: Snippets shape
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate snippets
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, sys
+          root = pathlib.Path("snippets")
+          if not root.is_dir():
+              print("OK: no snippets/ directory")
+              sys.exit(0)
+          md_files = sorted(p for p in root.rglob("*.md") if p.is_file())
+          if not md_files:
+              print("OK: no markdown snippets")
+              sys.exit(0)
+          for f in md_files:
+              text = f.read_text(encoding="utf-8")
+              # Snippets are paste-in blocks; they should not contain shell-fence
+              # instructions that would execute on copy.
+              bad_markers = ("#!/bin/", "#!/usr/bin/env")
+              if any(text.lstrip().startswith(b) for b in bad_markers):
+                  print(f"FAIL: {f}: snippet begins with a shebang; should be inert paste-in text")
+                  sys.exit(1)
+          print(f"OK: validated {len(md_files)} snippet file(s)")
+          PY
+
+  # Optional / guarded jobs. These rely on tooling that is not preinstalled
+  # on stock runners; we attempt install in a best-effort way and skip on
+  # failure. They are designed to FAIL LOUD only when explicitly opted in
+  # via workflow_dispatch with a maintainer's blessing.
+  optional-skill-audit:
+    name: Optional skill audit (best-effort)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Try install openclaw skill-creator (best-effort)
+        run: |
+          if command -v openclaw >/dev/null 2>&1; then
+            openclaw skill audit skills/
+          else
+            echo "::notice::openclaw CLI not available on this runner; skipping 'skill audit' step"
+          fi
+
+  optional-link-check:
+    name: Optional markdown link check (best-effort)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Try install markdown-link-check (best-effort)
+        run: |
+          if command -v markdown-link-check >/dev/null 2>&1; then
+            find docs examples -name '*.md' -print0 | xargs -0 -n1 markdown-link-check
+          else
+            echo "::notice::markdown-link-check not available on this runner; skipping"
+          fi
