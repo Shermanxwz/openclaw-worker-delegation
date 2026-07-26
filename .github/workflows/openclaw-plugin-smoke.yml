@@ -21,14 +21,32 @@ jobs:
           node-version: "24.15.0"
       - run: npm install --global openclaw@2026.7.1-2
       - name: Validate, install and cold-inspect plugin
+        id: smoke
+        continue-on-error: true
         shell: bash
         run: |
-          set -euxo pipefail
+          set +e
           export OPENCLAW_STATE_DIR="$RUNNER_TEMP/openclaw-plugin-smoke"
           export OPENCLAW_CONFIG_PATH="$OPENCLAW_STATE_DIR/openclaw.json"
           mkdir -p "$OPENCLAW_STATE_DIR"
           printf '{}\n' > "$OPENCLAW_CONFIG_PATH"
-          openclaw plugins validate --entry "$GITHUB_WORKSPACE/control-plane/openclaw-plugin/index.mjs"
-          openclaw plugins install "$GITHUB_WORKSPACE/control-plane/openclaw-plugin" --link --force
-          openclaw plugins enable delegation-guard
-          openclaw plugins inspect delegation-guard --json
+          {
+            set -x
+            openclaw plugins validate --entry "$GITHUB_WORKSPACE/control-plane/openclaw-plugin/index.mjs"
+            openclaw plugins install "$GITHUB_WORKSPACE/control-plane/openclaw-plugin" --link --force
+            openclaw plugins enable delegation-guard
+            openclaw plugins inspect delegation-guard --json
+          } > "$RUNNER_TEMP/plugin-smoke.log" 2>&1
+          status=$?
+          cat "$RUNNER_TEMP/plugin-smoke.log"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: plugin-smoke-${{ github.run_id }}
+          path: ${{ runner.temp }}/plugin-smoke.log
+          retention-days: 3
+      - name: Enforce smoke result
+        if: always()
+        run: test "${{ steps.smoke.outputs.status }}" = "0"
