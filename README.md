@@ -1,188 +1,135 @@
-# openclaw-worker-delegation
+# OpenClaw Delegation Control Plane
 
-A model-aware delegation rule set plus an experimental control plane for deciding whether an OpenClaw-style main session should answer directly or delegate execution to workers.
+A three-mode delegation controller for OpenClaw: keep Main as coordinator, send body-work to Workers, or temporarily let Main take over — with a phone-friendly Web panel, current-model visibility, and a native pre-tool enforcement plugin.
 
-> `main` remains the stable v0.1.1 documentation-only release. The `agent/control-plane-mvp` branch adds the v0.2 control-plane MVP without changing the existing main branch.
+> The repository's `main` branch remains the stable v0.1.1 documentation-only project. Development of the v0.2 runtime is isolated on `agent/control-plane-mvp` and proposed through PR #1.
 
-## v0.2 control-plane MVP
+## What v0.2 adds
 
-The new `control-plane/` application turns delegation from prompt advice into externally controlled runtime state.
+- One-click `WORKER`, `AUTO`, and time-bounded `MAIN` modes.
+- Task/session/project/global mode precedence.
+- Mobile Web panel over normal public-IP HTTPS; no Cloudflare or Tailscale dependency.
+- Current Main model, provider, session, Worker models, and heartbeat freshness.
+- Deterministic bilingual routing with explanations.
+- A native OpenClaw plugin that uses `before_prompt_build` and terminal `before_tool_call` blocking.
+- Host-derived agent roles, run/session route binding, fail-closed behavior, and auditable allowed/blocked calls.
+- Explicit `HARD` versus `ADVISORY` state based on real hook observations, not a checkbox or startup claim.
+- Password re-authentication, optional TOTP, CSRF/Origin checks, rate limits, bounded sessions/SSE/logs, and hardened deployment examples.
+- Zero third-party runtime dependencies for the controller; Node.js 20+.
 
-### What is included
+## Modes
 
-- Three one-click modes: `worker`, `auto`, and `main`.
-- Mode precedence: task override, session, project, then global default.
-- Expiring privilege elevation for main-only mode.
-- Deterministic routing scores and readable decision reasons.
-- A policy endpoint for main, worker, and verifier tool sets.
-- A mandatory pre-tool-check endpoint for hard runtime enforcement.
-- Runtime heartbeat reporting for the active main model, configured model, provider, workers and enforcement wiring.
-- Event ingestion for route, worker, verification, attempted and blocked tool calls.
-- A mobile-friendly web panel with live SSE updates.
-- Visible `HARD` versus `ADVISORY` enforcement state in the Web panel.
-- Password login, server-side sessions, CSRF protection, Origin checks, login throttling, redaction and security headers.
-- Loopback-only controller binding with Caddy and direct-public-IP Nginx deployment examples.
-- Zero third-party runtime dependencies; Node.js 20+ is sufficient.
+| Mode | Main | Worker / Verifier |
+|---|---|---|
+| `WORKER` | Pure text Q&A plus coordination tools only; no file reads, web body-work, mutation, or execution | Worker executes; Verifier is read-only by default |
+| `AUTO` | Router decides. A Main-routed light task may read/search but cannot mutate, execute, or spawn; a delegated task makes Main coordination-only | Runs when selected by routing |
+| `MAIN` | Full tool set except automatic Worker spawn; privilege expires | Existing Worker/Verifier tool calls are frozen immediately |
 
-### Architecture
+Model fallback never changes role permissions.
+
+## Architecture
 
 ```text
 Phone browser
     |
     | HTTPS :443
     v
-Caddy / Nginx on the VPS
+Nginx / Caddy on the VPS
     |
-    | loopback
+    | browser API only
     v
-Delegation Control Plane :8787
-    |-- mode store
-    |-- router
-    |-- permission policy
-    |-- tool gate
-    |-- runtime/model status
-    |-- event stream
-    `-- mobile web panel
-          |
-          v
-OpenClaw runtime adapter
-    |-- main
-    |-- body worker
-    `-- verifier
+Control Plane 127.0.0.1:8787
+    |-- mode store and expiry
+    |-- deterministic router
+    |-- policy/tool gate
+    |-- bounded audit stream
+    `-- runtime/model status
+             ^
+             | loopback bearer API
+             |
+OpenClaw native delegation-guard plugin
+    |-- before_prompt_build -> /api/route
+    |-- before_tool_call   -> /api/tool-check
+    |-- model/subagent hooks -> runtime status
+    `-- block: true on denied tools
 ```
 
-The runtime adapter is the enforcement point. It must call `/api/tool-check` before every tool invocation and refuse blocked actions. A runtime that only reads the policy but ignores the result remains advisory.
-
-### Important: what is still runtime integration work
-
-The repository contains the controller, API, Web panel and a runtime-neutral adapter, but it cannot patch an arbitrary OpenClaw installation automatically. For actual hard enforcement, the deployed OpenClaw agent loop still must:
-
-1. call `/api/route` before choosing main versus worker;
-2. call `/api/tool-check` before every tool execution;
-3. refuse execution whenever `allowed` is `false`;
-4. report the active main/worker models through `/api/runtime-status`;
-5. publish worker and tool lifecycle events.
-
-The Web panel shows `HARD` only when the runtime reports that both route and tool-check integration are wired. Otherwise it shows `ADVISORY`. It also shows `未上报` instead of guessing the current model.
-
-Implementation checklist:
-
-- [x] Control plane, router, policies and tool-check API.
-- [x] Mobile Web panel and model/enforcement display.
-- [x] Runtime-neutral client at `control-plane/integration/openclaw-sidecar-hook.mjs`.
-- [ ] Connect that client to the actual OpenClaw agent loop used on the target VPS.
-- [ ] Verify that no tool can execute after `allowed: false`.
-- [ ] Send model heartbeats on startup, fallback, switch and worker lifecycle changes.
+OpenClaw documents `before_tool_call` as an in-process pre-execution hook that can return terminal `block: true`. The included plugin is the enforcement point; the Web panel alone is not a sandbox.
 
 ## Quick start
 
 ```bash
 cd control-plane
 
-CONTROL_PASSWORD_INPUT='choose-a-long-password' npm run hash-password
+CONTROL_PASSWORD_INPUT='a unique passphrase of at least 14 characters' npm run hash-password
+npm run generate-token
+npm run generate-totp-secret   # recommended for public access
+
 cp .env.example .env
-# Add the generated hash and a long random AGENT_INGEST_TOKEN.
+# Fill CONTROL_PASSWORD_HASH, AGENT_INGEST_TOKEN, optional TOTP, PUBLIC_ORIGIN,
+# and the real Main/Worker/Verifier agent IDs.
 
-set -a
-. ./.env
-set +a
-
+set -a; . ./.env; set +a
+npm run check
 npm test
+npm run doctor
 npm start
 ```
 
-Open the controller locally at `http://127.0.0.1:8787`. For a VPS, expose it through the supplied reverse-proxy configs rather than changing `HOST` to `0.0.0.0`.
+The controller intentionally rejects non-loopback `HOST` values. Publish it through `control-plane/deploy/nginx-public-ip.conf` or the optional Caddy example.
 
-Deployment examples:
+## Install the native OpenClaw plugin
 
-- `control-plane/deploy/Caddyfile` for a normal HTTPS hostname.
-- `control-plane/deploy/nginx-public-ip.conf` for direct public-IP access with a trusted IP certificate.
-- `control-plane/deploy/openclaw-delegation.service` for systemd.
-
-## Modes
-
-### Worker
-
-Main plans, prepares briefs, spawns workers, reviews output and reports. Tool work is routed to workers. Main receives an allow-list containing read and session-management capabilities, while write/edit/patch/exec/process are denied.
-
-Pure text questions stay in main by default. Runtimes may request `workerAll` to delegate those too.
-
-### Auto
-
-Tasks receive an explainable score. Mutation, command execution, repository scans and retry-heavy work route to workers. Tool-requiring uncertainty fails closed to a worker.
-
-### Main
-
-Main receives execution tools and automatic worker spawning is denied. Switching to this mode through the web panel requires password re-authentication and gets a bounded expiry time.
-
-## Runtime API
-
-Browser-authenticated endpoints:
-
-```text
-POST /api/login
-GET  /api/session
-GET  /api/status
-PUT  /api/mode
-DELETE /api/mode
-POST /api/route
-GET  /api/events
-GET  /api/stream
+```bash
+openclaw plugins install --link /opt/openclaw-worker-delegation/control-plane/openclaw-plugin
+openclaw plugins enable delegation-guard
+openclaw gateway restart
+openclaw plugins inspect delegation-guard --runtime --json
 ```
 
-Agent bearer-token endpoints:
+Merge `control-plane/deploy/openclaw.example.json5` into the real OpenClaw configuration and provide the same random token to the Gateway as `OCWD_AGENT_TOKEN`.
+
+The panel remains `ADVISORY` until the controller observes a real `before_prompt_build` route and a real `before_tool_call` check from the same fresh plugin instance. This prevents a heartbeat or startup probe from falsely claiming hard enforcement.
+
+## Repository map
 
 ```text
-POST /api/route
-POST /api/policy
-POST /api/tool-check
-POST /api/runtime-status
-POST /api/events
+control-plane/
+├── src/                         # controller, auth, store, router and policy
+├── public/                      # responsive phone Web UI
+├── openclaw-plugin/             # native OpenClaw enforcement plugin
+├── integration/                 # runtime-neutral client for other loops
+├── deploy/                      # public-IP Nginx, Caddy, systemd, config example
+├── docs/                        # API, audit and threat model
+├── scripts/validate-deployment.sh
+└── test/                        # unit and HTTP integration tests
+
+skills/
+├── adaptive-worker-delegation/  # v0.2 behavior guidance
+└── model-aware-worker-delegation/ # original v0.1.1 skill, preserved
 ```
 
-A runtime-neutral client is included at `control-plane/integration/openclaw-sidecar-hook.mjs`.
+## Security boundary
 
-## Existing v0.1 rules remain available
+This project blocks model-originated tool calls. It does not protect against root, a compromised Gateway/controller process, a stolen agent token, or the side effects of an allowed Worker shell command. An allowed `exec` can mutate files even if file-edit tools are denied, so Workers should run in an OpenClaw sandbox with elevated execution disabled and appropriate exec approval/allowlist policy.
 
-The original skill is still present at:
+Read before deployment:
 
-```text
-skills/model-aware-worker-delegation/SKILL.md
-```
-
-The new externally controlled skill is additive:
-
-```text
-skills/adaptive-worker-delegation/SKILL.md
-```
-
-The original documentation remains useful for worker briefs, cost routing and failure recovery:
-
-- `examples/worker-brief-template.md`
-- `examples/decision-flow.md`
-- `examples/pre-flight-checklist.md`
-- `docs/failure-modes.md`
-- `docs/cost-routing.md`
+- `control-plane/docs/THREAT_MODEL.md`
+- `control-plane/docs/AUDIT.md`
+- `control-plane/deploy/PUBLIC_IP_DEPLOY.md`
+- `control-plane/docs/API.md`
 
 ## Validation
 
 ```bash
 cd control-plane
+npm run check
 npm test
-npm run doctor
+./scripts/validate-deployment.sh   # on the target VPS after installation
 ```
 
-GitHub Actions runs the Node tests for control-plane changes, alongside the existing skill validation and secret scan workflows.
-
-## Security posture
-
-- The controller rejects `HOST=0.0.0.0`.
-- Only the reverse proxy should be internet-facing.
-- Main-mode elevation requires re-authentication and expires.
-- Browser writes require a valid session, CSRF token and configured Origin.
-- Agent endpoints require a separate bearer token.
-- Event payloads redact common secret fields and truncate oversized content.
-- There is intentionally no arbitrary shell endpoint in the web panel.
+CI runs syntax checks, the complete Node test suite on Node 20 and 22, plugin manifest/package checks, and the repository's existing skill and secret scans.
 
 ## License
 

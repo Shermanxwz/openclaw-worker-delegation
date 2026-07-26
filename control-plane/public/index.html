@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>OpenClaw Delegation Control</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
@@ -11,86 +12,61 @@
     <section id="login-view" class="card login-card hidden">
       <p class="eyebrow">OPENCLAW CONTROL PLANE</p>
       <h1>远程控制台</h1>
-      <p class="muted">登录后切换 Worker / Auto / Main 模式，并查看模型、路由与越权事件。</p>
+      <p class="muted">切换 Worker / Auto / Main，查看实际模型、路由和工具拦截。</p>
       <form id="login-form">
         <label>控制台密码<input id="password" type="password" autocomplete="current-password" required></label>
+        <label id="login-totp-label" class="hidden">动态验证码<input id="login-totp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6"></label>
         <button type="submit" class="primary">登录</button>
-        <p id="login-error" class="error"></p>
+        <p id="login-error" class="error" aria-live="polite"></p>
       </form>
     </section>
 
     <section id="dashboard" class="hidden">
       <header class="topbar">
-        <div>
-          <p class="eyebrow">OPENCLAW CONTROL PLANE</p>
-          <h1>委派控制台</h1>
-        </div>
-        <div class="top-actions">
-          <span id="connection" class="badge">连接中</span>
-          <button id="logout" class="ghost">退出</button>
-        </div>
+        <div><p class="eyebrow">OPENCLAW CONTROL PLANE</p><h1>委派控制台</h1></div>
+        <div class="top-actions"><span id="connection" class="badge">连接中</span><button id="logout" class="ghost">退出</button></div>
       </header>
+
+      <section id="enforcement-banner" class="banner advisory" aria-live="polite">
+        <strong id="enforcement-state">ADVISORY</strong>
+        <span id="enforcement-detail">等待原生插件产生真实路由和工具前置调用</span>
+      </section>
 
       <section class="card mode-card">
         <div class="section-heading">
-          <div>
-            <p class="eyebrow">ACTIVE MODE</p>
-            <h2 id="resolved-mode">AUTO</h2>
-            <p id="mode-source" class="muted">来源：global</p>
-          </div>
+          <div><p class="eyebrow">ACTIVE MODE</p><h2 id="resolved-mode">AUTO</h2><p id="mode-source" class="muted">来源：global</p></div>
           <div class="scope-fields">
-            <label>作用域
-              <select id="scope">
-                <option value="session">当前会话</option>
-                <option value="project">当前项目</option>
-                <option value="global">全局默认</option>
-              </select>
-            </label>
-            <label id="scope-id-label">标识
-              <input id="scope-id" value="default-session" placeholder="session/project id">
-            </label>
-            <label>MAIN 有效时间
-              <select id="ttl">
-                <option value="15">15 分钟</option>
-                <option value="30" selected>30 分钟</option>
-                <option value="60">60 分钟</option>
-                <option value="120">120 分钟</option>
-              </select>
-            </label>
+            <label>作用域<select id="scope"><option value="session">当前会话</option><option value="project">当前项目</option><option value="global">全局默认</option></select></label>
+            <label id="scope-id-label">标识<input id="scope-id" value="default-session" maxlength="200" placeholder="session/project id"></label>
+            <label>MAIN 有效时间<select id="ttl"><option value="15">15 分钟</option><option value="30" selected>30 分钟</option><option value="60">60 分钟</option><option value="120">120 分钟</option></select></label>
           </div>
         </div>
         <div class="mode-grid">
-          <button class="mode-button worker" data-mode="worker"><strong>仅 Worker</strong><span>主控规划、派发、审核</span></button>
-          <button class="mode-button auto" data-mode="auto"><strong>自动判断</strong><span>按任务属性动态路由</span></button>
-          <button class="mode-button main" data-mode="main"><strong>仅主控</strong><span>临时开放完整执行权限</span></button>
+          <button class="mode-button worker" data-mode="worker"><strong>仅 Worker</strong><span>主控只规划、派发、审核</span></button>
+          <button class="mode-button auto" data-mode="auto"><strong>自动判断</strong><span>工具型工作默认交给 Worker</span></button>
+          <button class="mode-button main" data-mode="main"><strong>仅主控</strong><span>临时开放执行权限，自动到期</span></button>
         </div>
-        <p id="mode-message" class="muted"></p>
+        <div class="inline-actions"><button id="clear-override" class="ghost">清除当前覆盖</button><button id="use-runtime-session" class="ghost">使用运行时会话 ID</button></div>
+        <p id="mode-message" class="muted" aria-live="polite"></p>
       </section>
 
       <section class="grid-two">
         <article class="card">
           <div class="section-heading compact">
-            <div>
-              <p class="eyebrow">RUNTIME MODEL</p>
-              <h2 id="main-model">未上报</h2>
-              <p id="main-model-meta" class="muted">等待 OpenClaw 运行时心跳</p>
-            </div>
+            <div><p class="eyebrow">RUNTIME MODEL</p><h2 id="main-model">未上报</h2><p id="main-model-meta" class="muted">等待 OpenClaw 原生插件心跳</p></div>
             <span id="runtime-updated" class="badge">尚未上报</span>
           </div>
-          <pre id="worker-models" class="result">暂无活跃 Worker 上报</pre>
+          <pre id="worker-models" class="result small">暂无 Worker 上报</pre>
         </article>
-
         <article class="card">
-          <div class="section-heading compact">
-            <div>
-              <p class="eyebrow">ENFORCEMENT</p>
-              <h2 id="enforcement-state">ADVISORY</h2>
-              <p id="enforcement-detail" class="muted">尚未确认运行时已接入工具前置检查</p>
-            </div>
-          </div>
-          <pre class="result">HARD：OpenClaw 在每次工具调用前执行 /api/tool-check 并拒绝 allowed=false。
-
-ADVISORY：控制器只提供策略和监控，运行时仍可能绕过。</pre>
+          <div class="section-heading compact"><div><p class="eyebrow">ENFORCEMENT PROOF</p><h2>运行时证明</h2></div></div>
+          <dl class="proof-grid">
+            <div><dt>插件心跳</dt><dd id="proof-heartbeat">否</dd></div>
+            <div><dt>路由钩子实测</dt><dd id="proof-route">否</dd></div>
+            <div><dt>工具钩子实测</dt><dd id="proof-tool">否</dd></div>
+            <div><dt>实例一致</dt><dd id="proof-instance">否</dd></div>
+          </dl>
+          <p class="muted">HARD 不是运行时自报：必须是同一插件实例的心跳、路由调用和工具前置检查均被控制器实际观察到。</p>
         </article>
       </section>
 
@@ -98,34 +74,34 @@ ADVISORY：控制器只提供策略和监控，运行时仍可能绕过。</pre>
 
       <section class="grid-two">
         <article class="card">
-          <div class="section-heading compact"><div><p class="eyebrow">ROUTE EXPLAINER</p><h2>测试自动路由</h2></div></div>
-          <form id="route-form">
-            <textarea id="route-task" rows="4" placeholder="例如：扫描仓库并修复失败的测试"></textarea>
-            <button class="primary" type="submit">判断路由</button>
-          </form>
+          <div class="section-heading compact"><div><p class="eyebrow">ROUTE PREVIEW</p><h2>测试自动路由</h2></div></div>
+          <form id="route-form"><textarea id="route-task" rows="4" maxlength="20000" placeholder="例如：扫描仓库并修复失败的测试"></textarea><button class="primary" type="submit">预览路由</button></form>
           <pre id="route-result" class="result">尚未判断</pre>
         </article>
-
         <article class="card">
-          <div class="section-heading compact"><div><p class="eyebrow">LATEST ROUTE</p><h2>最近一次决策</h2></div></div>
+          <div class="section-heading compact"><div><p class="eyebrow">LATEST REAL ROUTE</p><h2>最近真实决策</h2></div></div>
           <pre id="latest-route" class="result">暂无记录</pre>
         </article>
       </section>
 
       <section class="card">
-        <div class="section-heading compact">
-          <div><p class="eyebrow">EVENT STREAM</p><h2>实时事件</h2></div>
-          <button id="refresh" class="ghost">刷新</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>时间</th><th>类型</th><th>角色</th><th>内容</th></tr></thead>
-            <tbody id="events"></tbody>
-          </table>
-        </div>
+        <div class="section-heading compact"><div><p class="eyebrow">AUDIT STREAM</p><h2>实时事件</h2></div><button id="refresh" class="ghost">刷新</button></div>
+        <div class="table-wrap"><table><thead><tr><th>时间</th><th>类型</th><th>角色/Agent</th><th>内容</th></tr></thead><tbody id="events"></tbody></table></div>
       </section>
     </section>
   </main>
+
+  <dialog id="main-dialog">
+    <form method="dialog" id="main-form" class="dialog-form">
+      <p class="eyebrow">PRIVILEGE ELEVATION</p>
+      <h2>启用仅主控模式</h2>
+      <p class="muted">这会临时允许主控执行命令和修改文件，同时禁止自动生成 Worker。到期后按原作用域规则恢复。</p>
+      <label>重新输入控制台密码<input id="reauth-password" type="password" autocomplete="current-password" required></label>
+      <label id="reauth-totp-label" class="hidden">动态验证码<input id="reauth-totp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6"></label>
+      <div class="dialog-actions"><button value="cancel" class="ghost">取消</button><button id="confirm-main" value="default" class="danger">确认提升</button></div>
+    </form>
+  </dialog>
+
   <script type="module" src="/app.js"></script>
 </body>
 </html>

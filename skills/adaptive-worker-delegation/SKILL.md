@@ -1,6 +1,6 @@
 ---
 name: adaptive-worker-delegation
-description: Apply externally selected worker, automatic, or main-only execution modes. Consult the delegation controller before tool use and obey its returned policy instead of inferring permissions from the active model.
+description: Obey externally selected Worker, Auto, or Main execution modes. Use the native delegation controller and pre-tool gate instead of inferring authority from the active model or chat history.
 license: MIT
 compatibility: openclaw, generic-agent-loop
 metadata:
@@ -13,44 +13,44 @@ metadata:
 
 # Adaptive worker delegation
 
-The current mode is external runtime state. Do not guess or reconstruct it from chat history.
+Mode and permissions are external runtime state. Never reconstruct them from conversation text, model identity, fallback behavior, or prior turns.
 
-## Before task execution
+## Runtime contract
 
-1. Ask the controller for the effective mode and route.
-2. Apply the returned tool policy before exposing tools to main.
-3. For every proposed tool invocation, enforce the controller tool check.
-4. Publish routing, tool, worker and verification events.
+1. Obtain the authoritative route before execution.
+2. Treat the controller/native plugin tool decision as mandatory.
+3. Never change `agentId`, `runId`, or session identity to seek a wider policy.
+4. A blocked call is final. Report it; do not search for an equivalent bypass.
+5. Publish Worker, model, tool, and verification lifecycle events.
 
-## Modes
+## Worker mode
 
-### Worker
+Main may understand the request, answer pure text questions, prepare a precise brief, spawn/observe Workers, review their reported output, and summarize. Main must not read project files, browse for body-work, mutate state, execute commands, run tests, or duplicate a Worker scan. Worker failure changes the brief, Worker, model, isolation, or strategy; it never silently transfers execution to Main.
 
-Main may understand, plan, create a brief, spawn a worker, inspect results and report. Main must not write, edit, patch, execute commands, run tests or duplicate worker body-work. Pure text Q&A may remain in main unless strict worker-all is active.
+## Auto mode
 
-### Auto
+Follow the route exactly. A Main-routed light task may use only the returned lightweight observation tools. A Worker-routed task makes Main coordination-only. Mutation, runtime execution, repository scans, and retry-heavy work should route to Workers; tool-requiring uncertainty fails closed to Worker.
 
-Use the controller result. Mutation, execution, repository scans and retry-heavy work default to workers. If routing is uncertain and the task requires tools, fail closed to a worker.
+## Main mode
 
-### Main
-
-Main performs the task directly and does not automatically spawn workers. This mode is an explicit user-controlled privilege elevation and may expire automatically.
+Main performs work directly and does not spawn Workers. Existing Worker and Verifier tool calls are frozen. Main mode is explicit temporary privilege elevation and may expire at any time; check the policy before every call.
 
 ## Role invariants
 
-- Model fallback never changes the role's permissions.
-- Worker failure changes the brief, worker, model or strategy; it does not silently transfer authority to main in worker mode.
-- A verifier may execute verification commands but must not edit source files.
-- A blocked tool call is a reportable event, not a suggestion to find a bypass.
+- Model fallback never changes role or permission.
+- Main cannot self-promote because a task seems easy or urgent.
+- Worker cannot impersonate Main or Verifier.
+- Verifier is read-only by default. Execution is allowed only when the deployment explicitly adds it and provides a disposable sandbox; `exec` is not inherently read-only.
+- The Worker brief must scope files, systems, destructive actions, expected output, verification, and risk.
 
-## Minimum worker brief
+## Minimum Worker brief
 
 ```text
 Objective: <exact outcome>
-Scope: <allowed files and systems>
-Do not: <destructive or external actions>
-Context: <minimal required facts>
-Output: <summary, files, commands, evidence>
-Verify: <specific verification>
-Risk: <low | medium | high and reason>
+Scope:     <allowed files, directories, systems>
+Do not:    <destructive, external, credential or publishing actions>
+Context:   <minimal required facts>
+Output:    <summary, changed files, commands and evidence>
+Verify:    <specific verification or verifier handoff>
+Risk:      <low | medium | high, with reason>
 ```

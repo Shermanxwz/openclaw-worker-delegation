@@ -1,0 +1,83 @@
+// Merge the relevant pieces into your existing OpenClaw configuration.
+// Dynamic Main/Auto/Worker switching is enforced by the plugin hook. Do not
+// statically deny main's execution tools if you expect MAIN mode to grant them;
+// OpenClaw policy layers can only narrow permissions, never grant back a deny.
+{
+  agents: {
+    defaults: {
+      subagents: {
+        maxConcurrent: 4,
+        runTimeoutSeconds: 900,
+        requireAgentId: true,
+      },
+    },
+    list: [
+      {
+        id: "main",
+        model: "<provider/strong-model>",
+        subagents: {
+          delegationMode: "prefer",
+          allowAgents: ["body-worker", "verifier"],
+          requireAgentId: true,
+        },
+        // Main needs the superset statically available. delegation-guard vetoes
+        // tools dynamically before execution according to the selected mode.
+        tools: { profile: "coding" },
+      },
+      {
+        id: "body-worker",
+        model: "<provider/worker-model>",
+        sandbox: {
+          mode: "all",
+          scope: "session",
+          workspaceAccess: "rw",
+        },
+        tools: {
+          profile: "coding",
+          deny: ["gateway", "cron", "message", "sessions_spawn"],
+          elevated: { enabled: false },
+        },
+      },
+      {
+        id: "verifier",
+        model: "<provider/verifier-model>",
+        sandbox: {
+          mode: "all",
+          scope: "session",
+          workspaceAccess: "ro",
+        },
+        tools: {
+          allow: ["read", "web_search", "web_fetch", "session_status"],
+          deny: ["group:runtime", "write", "edit", "apply_patch"],
+          elevated: { enabled: false },
+        },
+      },
+    ],
+  },
+
+  plugins: {
+    entries: {
+      "delegation-guard": {
+        enabled: true,
+        hooks: {
+          // Must exceed requestTimeoutMs. A timed-out before_tool_call handler
+          // is no longer an effective fail-closed boundary.
+          timeouts: {
+            before_prompt_build: 5000,
+            before_tool_call: 5000,
+          },
+        },
+        config: {
+          controllerUrl: "http://127.0.0.1:8787",
+          tokenEnv: "OCWD_AGENT_TOKEN",
+          failMode: "closed",
+          requestTimeoutMs: 2500,
+          heartbeatSeconds: 30,
+          mainAgentIds: ["main"],
+          workerAgentIds: ["body-worker"],
+          verifierAgentIds: ["verifier"],
+        },
+      },
+    },
+  },
+}

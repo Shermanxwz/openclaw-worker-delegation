@@ -15,21 +15,35 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: control-plane-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    name: Node ${{ matrix.node }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    defaults:
+      run:
+        working-directory: control-plane
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - name: Test controller
-        working-directory: control-plane
+          node-version: ${{ matrix.node }}
+      - name: Syntax and package checks
+        run: npm run check
+      - name: Unit and HTTP integration tests
         run: npm test
-      - name: Configuration doctor
-        working-directory: control-plane
-        env:
-          CONTROL_PASSWORD: example-password-for-ci-only
-          AGENT_INGEST_TOKEN: example-agent-token-for-ci-only
-          COOKIE_SECURE: "false"
-        run: npm run doctor
+      - name: Validate plugin package artifact
+        working-directory: control-plane/openclaw-plugin
+        run: npm pack --dry-run --json
+      - name: Validate example configuration and deploy scripts
+        run: |
+          node -e 'JSON.parse(require("fs").readFileSync("openclaw-plugin/openclaw.plugin.json", "utf8"))'
+          bash -n scripts/validate-deployment.sh

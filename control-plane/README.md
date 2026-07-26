@@ -1,123 +1,106 @@
 # OpenClaw Delegation Control Plane
 
-A small, dependency-free Node.js sidecar that adds three runtime modes, a public-web-ready mobile panel, routing explanations, model visibility, event monitoring and a policy API.
+The control plane is a small Node.js sidecar plus a native OpenClaw plugin. It provides externally controlled delegation modes, a public-IP-ready phone UI, actual model reporting, and pre-tool enforcement.
 
-## Modes
+## Required components
 
-- `worker`: main plans/reviews; tool work routes to a worker. Pure text Q&A stays in main unless `workerAll` is requested.
-- `auto`: score task properties and fail closed to worker for mutation, execution, scans and retry loops.
-- `main`: main receives execution tools and automatic worker spawning is disabled. Web switches require password re-authentication and expire by default.
+1. **Controller** — stores modes, routes tasks, evaluates tools, serves the Web UI, and records bounded audit events.
+2. **Native plugin** — runs inside OpenClaw and calls the controller from `before_prompt_build` and `before_tool_call`.
+3. **Reverse proxy** — terminates trusted HTTPS for the public phone UI while hiding agent-only endpoints.
+4. **Distinct agent IDs** — Main, body Worker, and Verifier must match controller and plugin configuration.
 
-Mode precedence is `task > session > project > global`.
+Starting only the controller produces `ADVISORY`, not `HARD`.
 
-## Run locally
+## Local setup
 
 ```bash
-cd control-plane
-CONTROL_PASSWORD_INPUT='a-long-password' npm run hash-password
+CONTROL_PASSWORD_INPUT='a unique passphrase of at least 14 characters' npm run hash-password
+npm run generate-token
+npm run generate-totp-secret
 cp .env.example .env
-# Put the generated hash and a random AGENT_INGEST_TOKEN in your environment.
 set -a; . ./.env; set +a
+npm run check
 npm test
+npm run doctor
 npm start
 ```
 
-The service binds to `127.0.0.1:8787`. Put Caddy or Nginx in front and expose only ports 80/443.
+The default URL is `http://127.0.0.1:8787`. Production configuration requires loopback binding, HTTPS `PUBLIC_ORIGIN`, secure cookies, a password hash, and a 32+ character agent token.
 
-## Runtime model reporting
+## Native plugin setup
 
-The controller does not guess the active model from configuration. The OpenClaw runtime should call `POST /api/runtime-status`:
-
-- on main-session startup;
-- whenever the main model changes or falls back;
-- whenever a worker starts, stops or changes model;
-- periodically while the runtime is active.
-
-Example payload:
-
-```json
-{
-  "main": {
-    "model": "provider/active-strong-model",
-    "configuredModel": "provider/configured-strong-model",
-    "provider": "provider-name",
-    "status": "running",
-    "sessionId": "session-123"
-  },
-  "workers": [
-    {
-      "id": "worker-42",
-      "model": "provider/worker-model",
-      "role": "body-worker",
-      "status": "running"
-    }
-  ],
-  "enforcement": {
-    "routeWired": true,
-    "toolCheckWired": true
-  },
-  "sessionId": "session-123",
-  "projectId": "project-abc"
-}
+```bash
+openclaw plugins install --link ./openclaw-plugin
+openclaw plugins enable delegation-guard
+openclaw gateway restart
+openclaw plugins inspect delegation-guard --runtime --json
 ```
 
-Until this heartbeat is wired, the panel intentionally shows `未上报` rather than presenting a configured model as the current active model.
+Use `deploy/openclaw.example.json5` as a merge guide. The plugin defaults to:
 
-## Runtime enforcement contract
+- loopback controller URL;
+- fail-closed behavior;
+- 2.5-second controller request timeout;
+- 30-second runtime/model heartbeat;
+- explicit Main/Worker/Verifier agent-ID maps.
 
-The panel is not itself an OpenClaw tool sandbox. The runtime adapter must:
+Set `OCWD_AGENT_TOKEN` in the OpenClaw Gateway environment to the same value used as controller `AGENT_INGEST_TOKEN`. Never put it in a prompt, skill, workspace file, or browser JavaScript.
 
-1. Call `POST /api/route` before selecting main vs worker.
-2. Call `POST /api/tool-check` before every tool invocation.
-3. Refuse the invocation when `allowed` is false.
-4. Publish attempted/allowed/blocked and worker lifecycle events to `POST /api/events`.
-5. Publish the active main/worker models and enforcement wiring to `POST /api/runtime-status`.
+## Enforcement proof
 
-See `integration/openclaw-sidecar-hook.mjs`. If the runtime only reads the policy but does not enforce it, the protection is advisory rather than hard.
+The Web UI shows `HARD` only when all conditions are true:
 
-The Web panel makes this distinction visible:
+- plugin heartbeat is fresh;
+- plugin reports route and tool hooks enabled;
+- the controller observed a real `/api/route` call marked `before_prompt_build`;
+- the controller observed a real `/api/tool-check` call marked `before_tool_call`;
+- both observations belong to the current plugin instance.
 
-- `HARD`: the runtime reports both routing and pre-tool-check wiring as active.
-- `ADVISORY`: either integration is missing or has not been reported.
+A Gateway or controller restart returns the state to `ADVISORY` until real traffic proves the hooks again.
 
-### Integration completion checklist
+## Mode behavior
 
-- [x] Control-plane mode store, router, policy and `/api/tool-check` endpoint.
-- [x] Runtime-neutral sidecar client.
-- [x] Web display for active models and enforcement state.
-- [ ] Wire the sidecar client into the actual OpenClaw agent loop.
-- [ ] Ensure every tool execution is blocked when `toolCheck().allowed === false`.
-- [ ] Emit runtime/model heartbeats from the actual OpenClaw process.
+### Worker
 
-The unchecked items are deployment/runtime integration work; cloning and starting this repository alone does not complete them.
+Main may answer without tools and coordinate workers. It receives session/agent coordination tools but not `read`, web tools, file mutation, or runtime execution. This prevents Main from “helpfully” duplicating Worker body-work.
 
-## API summary
+### Auto
 
-Browser session endpoints:
+The deterministic router scores task properties. If it chooses Main, Main may perform lightweight read/web work but cannot mutate, execute, or spawn. If it chooses Worker, Main becomes coordination-only.
 
-- `POST /api/login`
-- `GET /api/status`
-- `PUT /api/mode`
-- `POST /api/route`
-- `GET /api/events`
-- `GET /api/stream`
+### Main
 
-Agent bearer-token endpoints:
+Main may use its statically available tools except `sessions_spawn`. Existing Workers and Verifiers are immediately frozen by an empty dynamic policy. Web elevation requires explicit confirmation, password, optional TOTP, and expiry.
 
-- `POST /api/route`
-- `POST /api/policy`
-- `POST /api/tool-check`
-- `POST /api/runtime-status`
-- `POST /api/events`
+Only Main mode is automatically time-bounded. Worker and Auto persist until changed or an override is cleared.
 
-## VPS deployment
+## Model reporting
 
-1. Create a dedicated `openclaw` system user.
-2. Place the repository under `/opt/openclaw-worker-delegation`.
-3. Store secrets in `/etc/openclaw-delegation.env` with mode `0600`.
-4. Store state in `/var/lib/openclaw-delegation` and set `DATA_DIR` accordingly.
-5. Install the systemd unit from `deploy/openclaw-delegation.service`.
-6. Configure Caddy or Nginx with the files under `deploy/`.
-7. Open only HTTPS/HTTP and the chosen SSH port; do not expose port 8787.
+The plugin reports resolved provider/model information from model-call hooks and subagent lifecycle hooks. The UI distinguishes actual model from configured model where both are available. Missing data displays `未上报`; the controller never guesses.
 
-The UI is responsive and intended for direct phone use.
+## Public VPS deployment
+
+Use `deploy/PUBLIC_IP_DEPLOY.md`. The provided Nginx profile:
+
+- exposes only HTTPS browser endpoints;
+- returns 404 for route/policy/tool/runtime agent endpoints;
+- prevents public POSTs to event ingestion;
+- rate-limits login and API requests;
+- disables buffering for SSE;
+- leaves the controller on loopback.
+
+## Operational commands
+
+```bash
+npm run doctor
+curl --fail http://127.0.0.1:8787/health/ready
+openclaw plugins inspect delegation-guard --runtime --json
+./scripts/validate-deployment.sh
+```
+
+## Documentation
+
+- `docs/API.md` — endpoint contract.
+- `docs/THREAT_MODEL.md` — guarantees and non-goals.
+- `docs/AUDIT.md` — findings fixed and deployment acceptance work.
+- `deploy/openclaw.example.json5` — multi-agent/plugin configuration example.

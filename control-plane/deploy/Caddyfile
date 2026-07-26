@@ -1,10 +1,13 @@
-# Replace claw.example.com with a domain pointing to this VPS.
+# Optional hostname deployment. Replace the hostname.
 claw.example.com {
-  encode zstd gzip
-  reverse_proxy 127.0.0.1:8787
+    @agentEndpoints path /api/route /api/policy /api/tool-check /api/runtime-status
+    respond @agentEndpoints 404
 
-  header {
-    Strict-Transport-Security "max-age=31536000; includeSubDomains"
-    -Server
-  }
+    @agentEventPost {
+        path /api/events
+        method POST
+    }
+    respond @agentEventPost 404
+
+    reverse_proxy 127.0.0.1:8787
 }
