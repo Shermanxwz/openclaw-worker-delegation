@@ -27,16 +27,7 @@ jobs:
       - name: Install pinned official OpenClaw
         run: npm install --global openclaw@2026.7.1-2
       - name: Validate against a real Gateway
-        run: |
-          # `plugins validate --entry` is for defineToolPlugin entries, not
-          # general Hook plugins. Installation + runtime inspect is the
-          # supported validation path for delegation-guard.
-          sed -i '/plugins validate --entry/d' control-plane/test/openclaw/run-real-openclaw-e2e.sh
-          # The real Gateway injects its standard workspace, skill and tool
-          # schemas; use a realistic test-model context budget.
-          sed -i 's/"contextWindow": 32000/"contextWindow": 128000/' control-plane/test/openclaw/run-real-openclaw-e2e.sh
-          sed -i 's/"contextTokens": 24000/"contextTokens": 96000/' control-plane/test/openclaw/run-real-openclaw-e2e.sh
-          bash control-plane/test/openclaw/run-real-openclaw-e2e.sh
+        run: bash control-plane/test/openclaw/run-real-openclaw-e2e.sh
       - name: Upload integration evidence
         if: always()
         uses: actions/upload-artifact@v4
