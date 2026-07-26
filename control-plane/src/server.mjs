@@ -196,6 +196,13 @@ const server = http.createServer(async (req, res) => {
       return json(res, 202, { accepted: true, eventId: event.id });
     }
 
+    if (pathname === '/api/runtime-status' && req.method === 'POST') {
+      if (!requireAgent(req, res)) return;
+      const body = redact(await readJson(req, 128 * 1024));
+      const runtimeStatus = await store.updateRuntimeStatus(body);
+      return json(res, 200, { ok: true, runtimeStatus });
+    }
+
     if (pathname === '/api/stream' && req.method === 'GET') {
       if (!requireBrowserAuth(req, res)) return;
       setSecurityHeaders(res);
