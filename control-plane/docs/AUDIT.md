@@ -1,6 +1,6 @@
 # Production hardening audit
 
-This document records the review performed for the v0.2 control-plane branch. “Perfect” is not a defensible software claim; the target is a small, auditable system with explicit boundaries, regression tests, and fail-closed defaults.
+This document records the review performed for the v0.2 control-plane branch. “Perfect” is not a defensible software claim; the target is a small, auditable system with explicit boundaries, regression tests, fail-closed defaults, and evidence from the real OpenClaw runtime.
 
 ## Critical findings fixed
 
@@ -12,6 +12,7 @@ This document records the review performed for the v0.2 control-plane branch. �
 - Auto-routed lightweight Main tasks could still spawn Workers. The route is now authoritative.
 - Worker/Auto persistent switches accidentally inherited the Main TTL. Persistent Worker/Auto no longer expire; the explicit next-task scope is one-shot and separately time-bounded.
 - Expiring global Main state did not return to the default. Global expiry is now handled and periodically purged.
+- Real `model_call_started`/`model_call_ended` hooks do not guarantee `ctx.agentId`; the host identity can be carried by `event.sessionKey`. Runtime model reporting now derives the Agent ID from the documented `agent:<id>:...` session identity when needed.
 
 ## Security and reliability findings fixed
 
@@ -30,20 +31,38 @@ This document records the review performed for the v0.2 control-plane branch. �
 - Hardened systemd and reverse-proxy examples; agent-only APIs are excluded from the public proxy.
 - Changed Verifier to genuinely read-only by default.
 
-## Test coverage
+## Automated test coverage
 
-The suite covers routing in Chinese and English, mode semantics, one-shot task consumption, role derivation, spoof attempts, route binding, Main elevation, optional TOTP, password hashing, global expiry, controller restart proof reset, concurrent state writes, audit recovery, native plugin package consistency, and browser/agent API integration.
+The Node suite covers routing in Chinese and English, mode semantics, one-shot task consumption, role derivation, spoof attempts, route binding, Main elevation, optional TOTP, password hashing, global expiry, controller restart proof reset, concurrent state writes, audit recovery, native plugin package consistency, real Hook session identity normalization, and browser/agent API integration.
 
-## Remaining deployment acceptance work
+## Official OpenClaw runtime acceptance
 
-No repository can prove the behavior of a VPS it has not been installed on. Before calling a deployment complete:
+GitHub Actions installs Node.js `24.15.0` and the pinned official npm package `openclaw@2026.7.1-2`, then starts a real Gateway and installs the linked `delegation-guard` plugin through the official CLI.
 
-- Install and enable the native plugin in the target OpenClaw Gateway.
-- Confirm runtime inspection lists both hooks.
-- Confirm the Web panel reaches `HARD` only after a real route and real tool call.
-- Test blocked Main file/read/web/runtime tools in Worker mode.
-- Test Worker freeze in Main mode.
-- Test one-shot task consumption, mode expiry, and controller/Gateway restart behavior.
-- Confirm the Worker sandbox cannot read Gateway credentials or host-sensitive paths.
+The real-runtime E2E has passed all of these assertions:
+
+- plugin installation, enabling, configuration validation, and `plugins inspect --runtime --json`;
+- nine registered plugin hooks, including `before_prompt_build`, `before_tool_call`, model, subagent, and Gateway lifecycle hooks;
+- Auto mode blocking a real Main `exec` tool call;
+- Worker mode allowing a real Main `sessions_spawn`, a real body-worker model turn, and a real Worker `exec`;
+- Main mode allowing a real Main `exec`;
+- a Worker that had already started model generation being blocked before its delayed `exec` after switching to Main;
+- one-shot Main mode applying to exactly one real run and falling back on the next run;
+- actual Main and Worker model/provider reporting;
+- `HARD` proof from fresh heartbeat plus observed route and tool hooks;
+- complete fail-closed behavior after the Controller process is stopped.
+
+The E2E uses a deterministic local OpenAI-compatible endpoint so no third-party model key or probabilistic model behavior can hide a control-plane regression. The Gateway, plugin loader, agent and subagent loops, hook runner, and tools are the real OpenClaw implementation.
+
+## Remaining target-VPS acceptance work
+
+Repository and real-Gateway runtime behavior are validated. The remaining checks are specific to the operator's actual VPS and cannot be proven by a hosted CI runner:
+
+- trusted public HTTPS certificate and phone login through the selected VPS address;
+- the production model/provider credentials and fallback chain;
+- systemd, Nginx/Caddy, firewall, state-directory permissions, and restart behavior on that host;
+- real Worker sandbox isolation from Gateway credentials and host-sensitive paths;
+- operator-selected exec approvals/allowlists and filesystem/network boundaries;
+- load, disk retention, and recovery behavior under the VPS's actual resource limits.
 
 See `THREAT_MODEL.md` and `deploy/PUBLIC_IP_DEPLOY.md`.
