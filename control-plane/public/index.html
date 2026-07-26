@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenClaw Delegation Control</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <section id="login-view" class="card login-card hidden">
+      <p class="eyebrow">OPENCLAW CONTROL PLANE</p>
+      <h1>远程控制台</h1>
+      <p class="muted">登录后切换 Worker / Auto / Main 模式，并查看路由与越权事件。</p>
+      <form id="login-form">
+        <label>控制台密码<input id="password" type="password" autocomplete="current-password" required></label>
+        <button type="submit" class="primary">登录</button>
+        <p id="login-error" class="error"></p>
+      </form>
+    </section>
+
+    <section id="dashboard" class="hidden">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">OPENCLAW CONTROL PLANE</p>
+          <h1>委派控制台</h1>
+        </div>
+        <div class="top-actions">
+          <span id="connection" class="badge">连接中</span>
+          <button id="logout" class="ghost">退出</button>
+        </div>
+      </header>
+
+      <section class="card mode-card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">ACTIVE MODE</p>
+            <h2 id="resolved-mode">AUTO</h2>
+            <p id="mode-source" class="muted">来源：global</p>
+          </div>
+          <div class="scope-fields">
+            <label>作用域
+              <select id="scope">
+                <option value="session">当前会话</option>
+                <option value="project">当前项目</option>
+                <option value="global">全局默认</option>
+              </select>
+            </label>
+            <label id="scope-id-label">标识
+              <input id="scope-id" value="default-session" placeholder="session/project id">
+            </label>
+            <label>MAIN 有效时间
+              <select id="ttl">
+                <option value="15">15 分钟</option>
+                <option value="30" selected>30 分钟</option>
+                <option value="60">60 分钟</option>
+                <option value="120">120 分钟</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="mode-grid">
+          <button class="mode-button worker" data-mode="worker"><strong>仅 Worker</strong><span>主控规划、派发、审核</span></button>
+          <button class="mode-button auto" data-mode="auto"><strong>自动判断</strong><span>按任务属性动态路由</span></button>
+          <button class="mode-button main" data-mode="main"><strong>仅主控</strong><span>临时开放完整执行权限</span></button>
+        </div>
+        <p id="mode-message" class="muted"></p>
+      </section>
+
+      <section class="metrics" id="metrics"></section>
+
+      <section class="grid-two">
+        <article class="card">
+          <div class="section-heading compact"><div><p class="eyebrow">ROUTE EXPLAINER</p><h2>测试自动路由</h2></div></div>
+          <form id="route-form">
+            <textarea id="route-task" rows="4" placeholder="例如：扫描仓库并修复失败的测试"></textarea>
+            <button class="primary" type="submit">判断路由</button>
+          </form>
+          <pre id="route-result" class="result">尚未判断</pre>
+        </article>
+
+        <article class="card">
+          <div class="section-heading compact"><div><p class="eyebrow">LATEST ROUTE</p><h2>最近一次决策</h2></div></div>
+          <pre id="latest-route" class="result">暂无记录</pre>
+        </article>
+      </section>
+
+      <section class="card">
+        <div class="section-heading compact">
+          <div><p class="eyebrow">EVENT STREAM</p><h2>实时事件</h2></div>
+          <button id="refresh" class="ghost">刷新</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>时间</th><th>类型</th><th>角色</th><th>内容</th></tr></thead>
+            <tbody id="events"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
