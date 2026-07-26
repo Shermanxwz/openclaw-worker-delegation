@@ -1,6 +1,6 @@
 # OpenClaw Delegation Control Plane
 
-A small, dependency-free Node.js sidecar that adds three runtime modes, a public-web-ready mobile panel, routing explanations, event monitoring and a policy API.
+A small, dependency-free Node.js sidecar that adds three runtime modes, a public-web-ready mobile panel, routing explanations, model visibility, event monitoring and a policy API.
 
 ## Modes
 
@@ -24,6 +24,45 @@ npm start
 
 The service binds to `127.0.0.1:8787`. Put Caddy or Nginx in front and expose only ports 80/443.
 
+## Runtime model reporting
+
+The controller does not guess the active model from configuration. The OpenClaw runtime should call `POST /api/runtime-status`:
+
+- on main-session startup;
+- whenever the main model changes or falls back;
+- whenever a worker starts, stops or changes model;
+- periodically while the runtime is active.
+
+Example payload:
+
+```json
+{
+  "main": {
+    "model": "provider/active-strong-model",
+    "configuredModel": "provider/configured-strong-model",
+    "provider": "provider-name",
+    "status": "running",
+    "sessionId": "session-123"
+  },
+  "workers": [
+    {
+      "id": "worker-42",
+      "model": "provider/worker-model",
+      "role": "body-worker",
+      "status": "running"
+    }
+  ],
+  "enforcement": {
+    "routeWired": true,
+    "toolCheckWired": true
+  },
+  "sessionId": "session-123",
+  "projectId": "project-abc"
+}
+```
+
+Until this heartbeat is wired, the panel intentionally shows `未上报` rather than presenting a configured model as the current active model.
+
 ## Runtime enforcement contract
 
 The panel is not itself an OpenClaw tool sandbox. The runtime adapter must:
@@ -32,8 +71,25 @@ The panel is not itself an OpenClaw tool sandbox. The runtime adapter must:
 2. Call `POST /api/tool-check` before every tool invocation.
 3. Refuse the invocation when `allowed` is false.
 4. Publish attempted/allowed/blocked and worker lifecycle events to `POST /api/events`.
+5. Publish the active main/worker models and enforcement wiring to `POST /api/runtime-status`.
 
 See `integration/openclaw-sidecar-hook.mjs`. If the runtime only reads the policy but does not enforce it, the protection is advisory rather than hard.
+
+The Web panel makes this distinction visible:
+
+- `HARD`: the runtime reports both routing and pre-tool-check wiring as active.
+- `ADVISORY`: either integration is missing or has not been reported.
+
+### Integration completion checklist
+
+- [x] Control-plane mode store, router, policy and `/api/tool-check` endpoint.
+- [x] Runtime-neutral sidecar client.
+- [x] Web display for active models and enforcement state.
+- [ ] Wire the sidecar client into the actual OpenClaw agent loop.
+- [ ] Ensure every tool execution is blocked when `toolCheck().allowed === false`.
+- [ ] Emit runtime/model heartbeats from the actual OpenClaw process.
+
+The unchecked items are deployment/runtime integration work; cloning and starting this repository alone does not complete them.
 
 ## API summary
 
@@ -51,6 +107,7 @@ Agent bearer-token endpoints:
 - `POST /api/route`
 - `POST /api/policy`
 - `POST /api/tool-check`
+- `POST /api/runtime-status`
 - `POST /api/events`
 
 ## VPS deployment
