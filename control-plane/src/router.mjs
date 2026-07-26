@@ -1,11 +1,11 @@
 const patterns = {
-  mutation: /\b(edit|write|modify|change|patch|fix|implement|create|delete|refactor|update|安装|修改|编辑|写入|修复|实现|创建|删除|重构|更新)\b/i,
-  exec: /\b(run|execute|shell|command|test|build|deploy|lint|compile|restart|npm|pnpm|yarn|pytest|运行|执行|命令|测试|构建|部署|编译|重启)\b/i,
-  multiRead: /\b(scan|search|grep|audit|repository|repo|codebase|logs?|all files|tree|批量|扫描|搜索|审计|仓库|项目|日志|所有文件)\b/i,
-  retry: /\b(debug|failing|failure|retry|flaky|broken|investigate|调试|失败|重试|不稳定|排查)\b/i,
-  planning: /\b(plan|design|architecture|proposal|compare|方案|设计|架构|规划|比较)\b/i,
+  mutation: /(?:\b(?:edit|write|modify|change|patch|fix|implement|create|delete|refactor|update)\b|安装|修改|编辑|写入|修复|实现|创建|删除|重构|更新)/i,
+  exec: /(?:\b(?:run|execute|shell|command|test|build|deploy|lint|compile|restart|npm|pnpm|yarn|pytest)\b|运行|执行|命令|测试|构建|部署|编译|重启)/i,
+  multiRead: /(?:\b(?:scan|search|grep|audit|repository|repo|codebase|logs?|all files|tree)\b|批量|扫描|搜索|审计|仓库|项目|日志|所有文件)/i,
+  retry: /(?:\b(?:debug|failing|failure|retry|flaky|broken|investigate)\b|调试|失败|重试|不稳定|排查)/i,
+  planning: /(?:\b(?:plan|design|architecture|proposal|compare)\b|方案|设计|架构|规划|比较)/i,
   pureQa: /^(what|why|how|explain|describe|tell me|是什么|为什么|怎么|解释|说明|告诉我)/i,
-  knownRead: /\b(read|show|open|查看|读取)\b.*\b(file|readme|package\.json|文件)\b/i,
+  knownRead: /(?:(?:\b(?:read|show|open)\b|查看|读取).*(?:\b(?:file|readme|package\.json)\b|文件))/i,
 };
 
 export function classifyTask(task = '', supplied = {}) {
