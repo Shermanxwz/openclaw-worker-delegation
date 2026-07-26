@@ -36,7 +36,7 @@ permissions:
 
 Notes:
 
-- `default_model` is what the main session uses for planning and reviewing. The `model-aware-worker-delegation` skill assumes the main session starts on this model and falls back only when the runtime forces it.
+- `default_model` is what the main session uses for planning and reviewing. The `adaptive-worker-delegation` skill assumes the main session starts on this model and falls back only when the runtime forces it.
 - `permissions.allow` should be **narrow** in the main session. If a worker is doing scans, main should not need network egress.
 
 ## 2. Cheap worker (body-work) model for delegated tasks
@@ -162,11 +162,11 @@ Notes:
   },
   "skills": {
     "include": [
-      "skills/model-aware-worker-delegation/"
+      "skills/adaptive-worker-delegation/"
     ]
   },
   "delegation": {
-    "rule": "skills/model-aware-worker-delegation/SKILL.md",
+    "rule": "skills/adaptive-worker-delegation/SKILL.md",
     "default_decision": "route_via_classifier",
     "fallback_decision": "do_in_main"
   }

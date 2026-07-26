@@ -128,8 +128,7 @@ control-plane/
     └── openclaw/                # pinned real-Gateway E2E harness
 
 skills/
-├── adaptive-worker-delegation/  # v0.2 behavior guidance
-└── model-aware-worker-delegation/ # original v0.1.1 skill, preserved
+└── adaptive-worker-delegation/  # v0.2 behavior guidance (replaces retired model-aware-worker-delegation)
 ```
 
 ## Security boundary
