@@ -1,0 +1,35 @@
+name: control-plane
+
+on:
+  pull_request:
+    paths:
+      - "control-plane/**"
+      - ".github/workflows/control-plane.yml"
+  push:
+    branches: [main]
+    paths:
+      - "control-plane/**"
+      - ".github/workflows/control-plane.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test controller
+        working-directory: control-plane
+        run: npm test
+      - name: Configuration doctor
+        working-directory: control-plane
+        env:
+          CONTROL_PASSWORD: example-password-for-ci-only
+          AGENT_INGEST_TOKEN: example-agent-token-for-ci-only
+          COOKIE_SECURE: "false"
+        run: npm run doctor
