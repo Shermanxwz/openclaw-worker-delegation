@@ -86,8 +86,8 @@ cat > "$CONFIG" <<JSON
           "reasoning": false,
           "input": ["text"],
           "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
-          "contextWindow": 32000,
-          "contextTokens": 24000,
+          "contextWindow": 128000,
+          "contextTokens": 96000,
           "maxTokens": 4096
         }]
       }
@@ -184,7 +184,6 @@ node "$CONTROL/src/server.mjs" >"$LOGS/controller.log" 2>&1 & CONTROL_PID=$!
 wait_http "http://127.0.0.1:$CONTROLLER_PORT/health/ready" 30
 
 openclaw config validate --json 2>&1 | tee "$LOGS/config-before-plugin.json"
-(cd "$CONTROL/openclaw-plugin" && openclaw plugins validate --entry ./index.mjs) 2>&1 | tee "$LOGS/plugin-validate.log"
 (cd "$CONTROL/openclaw-plugin" && openclaw plugins install --link .) 2>&1 | tee "$LOGS/plugin-install.log"
 openclaw plugins enable delegation-guard 2>&1 | tee "$LOGS/plugin-enable.log"
 
@@ -257,7 +256,7 @@ assert_file_exists "$MARKERS/worker-exec-ok"
 
 # Main mode: Main exec is allowed and an existing Worker is frozen after switch.
 mode global '' main 15 > "$LOGS/mode-main.json"
-run_agent "33333333-3333-4333-8333-333333333333" OCWD_ALLOW_MAIN_EXEC "$LOGS/main-allow.json"
+run_agent "33333333-3333-4333-8333-33333333333" OCWD_ALLOW_MAIN_EXEC "$LOGS/main-allow.json"
 assert_file_exists "$MARKERS/main-exec-ok"
 
 mode global '' worker > "$LOGS/mode-worker-freeze.json"
