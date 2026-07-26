@@ -18,6 +18,12 @@ test('auto mode delegates mutation and execution', () => {
   assert.ok(result.score >= 3);
 });
 
+test('auto mode understands Chinese tool work', () => {
+  const result = routeTask({ mode: 'auto', task: '扫描仓库并修复失败的测试' });
+  assert.equal(result.actor, 'worker');
+  assert.ok(result.score >= 5);
+});
+
 test('main mode never routes to worker', () => {
   const result = routeTask({ mode: 'main', task: 'scan the repository and fix tests' });
   assert.equal(result.actor, 'main');
