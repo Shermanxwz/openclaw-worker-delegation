@@ -7,7 +7,7 @@ A three-mode delegation controller for OpenClaw: keep Main as coordinator, send 
 ## What v0.2 adds
 
 - One-click `WORKER`, `AUTO`, and time-bounded `MAIN` modes.
-- Task/session/project/global mode precedence.
+- One-shot task, session, project, and global mode precedence.
 - Mobile Web panel over normal public-IP HTTPS; no Cloudflare or Tailscale dependency.
 - Current Main model, provider, session, Worker models, and heartbeat freshness.
 - Deterministic bilingual routing with explanations.
@@ -16,6 +16,7 @@ A three-mode delegation controller for OpenClaw: keep Main as coordinator, send 
 - Explicit `HARD` versus `ADVISORY` state based on real hook observations, not a checkbox or startup claim.
 - Password re-authentication, optional TOTP, CSRF/Origin checks, rate limits, bounded sessions/SSE/logs, and hardened deployment examples.
 - Zero third-party runtime dependencies for the controller; Node.js 20+.
+- A pinned real-OpenClaw end-to-end test using OpenClaw `2026.7.1-2` and Node.js `24.15.0`.
 
 ## Modes
 
@@ -81,7 +82,8 @@ The controller intentionally rejects non-loopback `HOST` values. Publish it thro
 ## Install the native OpenClaw plugin
 
 ```bash
-openclaw plugins install --link /opt/openclaw-worker-delegation/control-plane/openclaw-plugin
+cd /opt/openclaw-worker-delegation/control-plane/openclaw-plugin
+openclaw plugins install --link .
 openclaw plugins enable delegation-guard
 openclaw gateway restart
 openclaw plugins inspect delegation-guard --runtime --json
@@ -90,6 +92,25 @@ openclaw plugins inspect delegation-guard --runtime --json
 Merge `control-plane/deploy/openclaw.example.json5` into the real OpenClaw configuration and provide the same random token to the Gateway as `OCWD_AGENT_TOKEN`.
 
 The panel remains `ADVISORY` until the controller observes a real `before_prompt_build` route and a real `before_tool_call` check from the same fresh plugin instance. This prevents a heartbeat or startup probe from falsely claiming hard enforcement.
+
+## Real OpenClaw end-to-end validation
+
+The repository does not rely only on a mocked plugin host. `.github/workflows/openclaw-e2e.yml` installs the pinned official npm package, starts a real Gateway, installs the actual linked plugin, and drives real agent/tool loops through a deterministic local OpenAI-compatible model endpoint.
+
+The test proves:
+
+- official plugin install, enable, config validation, and runtime inspection;
+- runtime registration of `before_prompt_build` and `before_tool_call`;
+- Auto mode blocks Main `exec`;
+- Worker mode permits a real `sessions_spawn` and Worker `exec`;
+- Main mode permits Main `exec`;
+- switching to Main freezes a Worker that was already generating its tool call;
+- a next-task Main override is consumed exactly once;
+- Main and Worker models/providers are reported from real model/subagent hooks;
+- the panel reaches `HARD` only after observed runtime hooks;
+- stopping the Controller blocks every subsequent tool in fail-closed mode.
+
+The deterministic model server removes external provider keys and nondeterminism; the Gateway, plugin loader, agent loop, subagent loop, and tool execution path are the official OpenClaw runtime.
 
 ## Repository map
 
@@ -102,7 +123,9 @@ control-plane/
 ├── deploy/                      # public-IP Nginx, Caddy, systemd, config example
 ├── docs/                        # API, audit and threat model
 ├── scripts/validate-deployment.sh
-└── test/                        # unit and HTTP integration tests
+└── test/
+    ├── *.test.mjs               # unit and HTTP integration tests
+    └── openclaw/                # pinned real-Gateway E2E harness
 
 skills/
 ├── adaptive-worker-delegation/  # v0.2 behavior guidance
@@ -129,7 +152,7 @@ npm test
 ./scripts/validate-deployment.sh   # on the target VPS after installation
 ```
 
-CI runs syntax checks, the complete Node test suite on Node 20 and 22, plugin manifest/package checks, and the repository's existing skill and secret scans.
+CI runs the complete Node test suite on Node 20 and 22, plugin package checks, official OpenClaw plugin smoke tests, the pinned real-Gateway E2E, skill validation, and secret scanning.
 
 ## License
 
