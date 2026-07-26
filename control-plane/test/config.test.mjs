@@ -21,3 +21,17 @@ test('valid production config passes', () => {
   });
   assert.deepEqual(validateConfig(config).errors, []);
 });
+
+test('MAIN_ALLOW_PERSISTENT defaults to false and toggles from env', () => {
+  const defaultConfig = loadConfig({
+    NODE_ENV: 'test', HOST: '127.0.0.1', COOKIE_SECURE: 'false',
+    CONTROL_PASSWORD_HASH: 'scrypt$2$1$1$1$a$b', AGENT_INGEST_TOKEN: 'x'.repeat(48),
+  });
+  assert.equal(defaultConfig.mainAllowPersistent, false);
+  const enabled = loadConfig({
+    NODE_ENV: 'test', HOST: '127.0.0.1', COOKIE_SECURE: 'false',
+    CONTROL_PASSWORD_HASH: 'scrypt$2$1$1$1$a$b', AGENT_INGEST_TOKEN: 'x'.repeat(48),
+    MAIN_ALLOW_PERSISTENT: 'true',
+  });
+  assert.equal(enabled.mainAllowPersistent, true);
+});

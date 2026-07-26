@@ -28,7 +28,7 @@ The control plane prevents an OpenClaw model from silently crossing the selected
 4. Worker mode gives main coordination tools only. Main cannot read files, browse, mutate, or execute body-work tools.
 5. Auto mode makes the router authoritative: a main-routed light task cannot spawn a worker; a worker-routed task cannot be duplicated by main.
 6. Main mode freezes already-running worker and verifier tool calls, not just future spawns.
-7. Main elevation requires explicit confirmation, password re-authentication, optional TOTP, and a bounded expiry. A next-task override is stored server-side, consumed once for the named session, and cannot be asserted by an agent request body.
+7. Main elevation requires explicit confirmation, password re-authentication, optional TOTP, and a bounded expiry. Persistent Main is opt-in: when `MAIN_ALLOW_PERSISTENT=true` is set on the controller, the browser may request a persistent Main entry using the distinct `ENABLE_MAIN_PERSISTENT` confirmation token. Otherwise the controller rejects `ttlMinutes: 0` for Main with `403 persistent_main_disabled`. A next-task override is stored server-side, consumed once for the named session, and cannot be asserted by an agent request body.
 8. `HARD` requires a fresh heartbeat plus actual route and tool-hook observations from the same plugin instance. A controller restart clears old observations.
 9. State writes are atomic and serialized; the audit file is bounded and compacted.
 10. Public reverse-proxy examples hide agent-only endpoints and expose only the authenticated browser surface.

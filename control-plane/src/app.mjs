@@ -100,11 +100,36 @@ export async function createControlPlane(config) {
     return { sessionId: validateIdentifier(url.searchParams.get('sessionId') || '', 'session_id'), projectId: validateIdentifier(url.searchParams.get('projectId') || '', 'project_id') };
   }
 
+  function isForbiddenStaticName(name) {
+    // Reject hidden segments (any path segment starting with '.') and common
+    // editor / backup / temp suffixes. Guards against accidentally shipping
+    // backup files in the public directory and exposing them anonymously.
+    if (!name) return false;
+    const segments = name.split('/');
+    for (const segment of segments) {
+      if (!segment) continue;
+      // Hidden dot-segments: ".bak-*", ".git", ".env", etc.
+      if (segment.startsWith('.')) return true;
+      // Backup / editor temp extensions. Match ".<ext>" optionally followed by
+      // a separator (".bak", ".bak.1", ".bak-something", ".swp", ".tmp",
+      // ".orig", ".old", ".bak-20260726-220441").
+      if (/\.bak(?:[.\-].*)?$/i.test(segment)) return true;
+      if (/\.old(?:[.\-].*)?$/i.test(segment)) return true;
+      if (/\.swp(?:[.\-].*)?$/i.test(segment)) return true;
+      if (/\.tmp(?:[.\-].*)?$/i.test(segment)) return true;
+      if (/\.orig(?:[.\-].*)?$/i.test(segment)) return true;
+      // Editor backup tail (e.g. "app.js~")
+      if (/~$/.test(segment)) return true;
+    }
+    return false;
+  }
+
   async function serveStatic(res, pathname) {
     let decoded;
     try { decoded = decodeURIComponent(pathname); } catch { return false; }
     const requested = decoded === '/' ? 'index.html' : decoded.replace(/^\/+/, '');
     if (!requested || requested.includes('\0')) return false;
+    if (isForbiddenStaticName(requested)) return false;
     const absolute = path.resolve(config.publicDir, requested);
     const relative = path.relative(config.publicDir, absolute);
     if (relative.startsWith('..') || path.isAbsolute(relative)) return false;
@@ -211,19 +236,25 @@ export async function createControlPlane(config) {
         let ttlMinutes = Number(body.ttlMinutes || 0);
         if (!Number.isFinite(ttlMinutes) || ttlMinutes < 0) return json(res, 400, { error: 'invalid_ttl' });
         if (mode === 'main') {
-          if (body.confirmation !== 'ENABLE_MAIN') return json(res, 400, { error: 'main_confirmation_required' });
+          if (body.confirmation !== 'ENABLE_MAIN' && body.confirmation !== 'ENABLE_MAIN_PERSISTENT') return json(res, 400, { error: 'main_confirmation_required' });
           if (!(await verifyControlCredential(body.reauthPassword || '', body.reauthTotp || ''))) return json(res, 403, { error: 'reauthentication_required' });
+          const wantsPersistent = body.ttlMinutes === 0 && body.confirmation === 'ENABLE_MAIN_PERSISTENT';
+          if (wantsPersistent && !config.mainAllowPersistent) return json(res, 403, { error: 'persistent_main_disabled' });
           const defaultTtl = scope === 'task' ? config.taskOverrideDefaultTtlMinutes : config.mainModeDefaultTtlMinutes;
           const maxTtl = scope === 'task'
             ? Math.min(config.taskOverrideMaxTtlMinutes, config.mainModeMaxTtlMinutes)
             : config.mainModeMaxTtlMinutes;
-          ttlMinutes = Math.min(ttlMinutes || defaultTtl, maxTtl);
+          if (wantsPersistent) {
+            ttlMinutes = 0;
+          } else {
+            ttlMinutes = Math.min(ttlMinutes || defaultTtl, maxTtl);
+          }
         } else if (scope === 'task') {
           ttlMinutes = Math.min(ttlMinutes || config.taskOverrideDefaultTtlMinutes, config.taskOverrideMaxTtlMinutes);
         } else {
           ttlMinutes = 0;
         }
-        const entry = await store.setMode({ scope, id, mode, ttlMinutes, actor: 'web' });
+        const entry = await store.setMode({ scope, id, mode, ttlMinutes, actor: 'web', persistent: mode === 'main' && ttlMinutes === 0 });
         return json(res, 200, { ok: true, entry, resolved: store.resolveMode({ sessionId: scope === 'session' || scope === 'task' ? id : '', projectId: scope === 'project' ? id : '' }) });
       }
       if (pathname === '/api/mode' && req.method === 'DELETE') {

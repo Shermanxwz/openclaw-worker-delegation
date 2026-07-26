@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="OpenClaw Control Plane">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0A84FF"/>
+      <stop offset="55%" stop-color="#007AFF"/>
+      <stop offset="100%" stop-color="#34C759"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.78"/>
+    </linearGradient>
+    <linearGradient id="nodeW" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#34C759"/>
+      <stop offset="100%" stop-color="#1f7a3a"/>
+    </linearGradient>
+    <linearGradient id="nodeM" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FF9F0A"/>
+      <stop offset="100%" stop-color="#b35900"/>
+    </linearGradient>
+  </defs>
+
+  <!-- iOS rounded square base -->
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#bg)"/>
+
+  <!-- subtle inner highlight -->
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="2"/>
+
+  <!-- control plane motif: a router ring with three nodes (Main / Worker / Auto) -->
+  <g transform="translate(256 256)">
+    <!-- center hub -->
+    <circle r="34" fill="#ffffff" fill-opacity="0.18"/>
+    <circle r="18" fill="#ffffff"/>
+
+    <!-- ring -->
+    <circle r="132" fill="none" stroke="url(#ring)" stroke-width="6" stroke-opacity="0.75"/>
+    <!-- arc gap to imply rotation / routing -->
+    <path d="M 132 0 A 132 132 0 0 1 0 132" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="6" stroke-linecap="round"/>
+
+    <!-- three nodes at top, bottom-left, bottom-right -->
+    <!-- Worker node (green) -->
+    <g transform="rotate(-90) translate(0 -132) rotate(90)">
+      <circle r="36" fill="url(#nodeW)"/>
+      <circle r="36" fill="none" stroke="#ffffff" stroke-width="4"/>
+      <!-- W mark -->
+      <path d="M -14 -8 L -8 8 L -2 -4 L 2 8 L 8 -8" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <!-- Main node (orange) -->
+    <g transform="rotate(150) translate(0 -132) rotate(-150)">
+      <circle r="36" fill="url(#nodeM)"/>
+      <circle r="36" fill="none" stroke="#ffffff" stroke-width="4"/>
+      <!-- M mark -->
+      <path d="M -12 8 L -12 -8 L -6 2 L 0 -8 L 6 2 L 12 -8 L 12 8" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <!-- Auto node (white/blue) -->
+    <g transform="rotate(30) translate(0 -132) rotate(-30)">
+      <circle r="36" fill="#ffffff"/>
+      <circle r="36" fill="none" stroke="#007AFF" stroke-width="4"/>
+      <!-- A mark -->
+      <path d="M -10 8 L -2 -8 L 6 8 M -6 2 L 2 2" fill="none" stroke="#007AFF" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </g>
+</svg>

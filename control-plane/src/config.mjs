@@ -49,6 +49,7 @@ export function loadConfig(env = process.env) {
     defaultMode,
     mainModeDefaultTtlMinutes: asInt(env.MAIN_MODE_DEFAULT_TTL_MINUTES, 30, 5, 240),
     mainModeMaxTtlMinutes: asInt(env.MAIN_MODE_MAX_TTL_MINUTES, 120, 5, 1440),
+    mainAllowPersistent: asBool(env.MAIN_ALLOW_PERSISTENT, false),
     taskOverrideDefaultTtlMinutes: asInt(env.TASK_OVERRIDE_DEFAULT_TTL_MINUTES, 30, 5, 240),
     taskOverrideMaxTtlMinutes: asInt(env.TASK_OVERRIDE_MAX_TTL_MINUTES, 120, 5, 1440),
     maxEvents: asInt(env.MAX_EVENTS, 2000, 100, 100_000),

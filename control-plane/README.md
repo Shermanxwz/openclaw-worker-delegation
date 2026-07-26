@@ -72,7 +72,7 @@ The deterministic router scores task properties. If it chooses Main, Main may pe
 
 Main may use its statically available tools except `sessions_spawn`. Existing Workers and Verifiers are immediately frozen by an empty dynamic policy. Web elevation requires explicit confirmation, password, optional TOTP, and expiry.
 
-Only persistent Main mode is automatically time-bounded. Worker and Auto persist until changed. A “next task” override is always one-shot and expires if it is not consumed.
+Persistent Main mode is intentionally time-bounded by default (see `MAIN_MODE_MAX_TTL_MINUTES`). Operators may opt into persistent Main by setting `MAIN_ALLOW_PERSISTENT=true` in the controller environment. When enabled, the Web panel exposes a “until I manually switch back to Auto” option that requires the explicit `ENABLE_MAIN_PERSISTENT` confirmation token in addition to the normal password and TOTP re-auth. Persistent Main stays in effect until the operator switches back to Auto or Worker in the Web panel. Worker and Auto persist until changed by default. A “next task” override is always one-shot and expires if it is not consumed.
 
 ## One-shot next-task override
 

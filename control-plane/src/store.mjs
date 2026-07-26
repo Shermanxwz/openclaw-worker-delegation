@@ -150,18 +150,19 @@ export class StateStore {
     return resolved;
   }
 
-  async setMode({ scope, id = '', mode, ttlMinutes = 0, actor = 'user' }) {
+  async setMode({ scope, id = '', mode, ttlMinutes = 0, actor = 'user', persistent = false }) {
     if (!validScopes.has(scope)) throw Object.assign(new Error(`Invalid scope: ${scope}`), { statusCode: 400 });
     if (!validModes.has(mode)) throw Object.assign(new Error(`Invalid mode: ${mode}`), { statusCode: 400 });
     if (scope !== 'global' && (!id || id.length > 200)) throw Object.assign(new Error(`${scope} mode requires a valid id`), { statusCode: 400 });
     const now = this.now();
-    const entry = { mode, updatedAt: new Date(now).toISOString(), actor, ...(ttlMinutes > 0 ? { expiresAt: new Date(now + ttlMinutes * 60_000).toISOString() } : {}) };
+    const isPersistent = Boolean(persistent) && ttlMinutes === 0;
+    const entry = { mode, updatedAt: new Date(now).toISOString(), actor, ...(ttlMinutes > 0 ? { expiresAt: new Date(now + ttlMinutes * 60_000).toISOString() } : {}), ...(isPersistent ? { persistent: true } : {}) };
     if (scope === 'global') this.state.global = entry;
     if (scope === 'project') this.state.projects[id] = entry;
     if (scope === 'session') this.state.sessions[id] = entry;
     if (scope === 'task') this.state.tasks[id] = entry;
     await this.persistState();
-    await this.appendEvent({ type: 'mode.changed', scope, scopeId: id || null, mode, actor, expiresAt: entry.expiresAt || null });
+    await this.appendEvent({ type: 'mode.changed', scope, scopeId: id || null, mode, actor, expiresAt: entry.expiresAt || null, persistent: isPersistent });
     return clone(entry);
   }
 

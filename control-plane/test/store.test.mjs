@@ -137,3 +137,17 @@ test('expired next-task override is never consumed', async () => {
   assert.equal(resolved.mode, 'auto');
   assert.notEqual(resolved.source, 'task');
 });
+
+test('persistent main entry is recorded without expiresAt and visible in snapshot', async () => {
+  const { store } = await tempStore();
+  const entry = await store.setMode({ scope: 'global', mode: 'main', ttlMinutes: 0, persistent: true });
+  assert.equal(entry.expiresAt, undefined);
+  assert.equal(entry.persistent, true);
+  const snapshot = store.snapshot();
+  assert.equal(snapshot.resolvedMode.mode, 'main');
+  assert.equal(snapshot.resolvedMode.entry.persistent, true);
+  assert.equal(snapshot.resolvedMode.entry.expiresAt, undefined);
+
+  const nonPersistent = await store.setMode({ scope: 'global', mode: 'worker', ttlMinutes: 0 });
+  assert.equal(nonPersistent.persistent, undefined);
+});

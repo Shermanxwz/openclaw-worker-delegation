@@ -50,7 +50,20 @@ For `mode: "main"`, also send:
 }
 ```
 
-Persistent Main mode is time-bounded by the UI/API. Worker and Auto persist until changed. With `scope: "task"`, `id` is a session ID and the override is consumed by exactly one real Main route; every task override expires if unused.
+Main mode is time-bounded. Worker and Auto persist until changed. With `scope: "task"`, `id` is a session ID and the override is consumed by exactly one real Main route; every task override expires if unused.
+
+To enable a persistent Main entry that only stops when the operator manually switches back to Auto or Worker, the operator must have set `MAIN_ALLOW_PERSISTENT=true` on the controller, and the request must use:
+
+```json
+{
+  "confirmation": "ENABLE_MAIN_PERSISTENT",
+  "reauthPassword": "...",
+  "reauthTotp": "123456",
+  "ttlMinutes": 0
+}
+```
+
+Persistent Main is rejected with `403 persistent_main_disabled` when the env flag is off, even with the special confirmation token.
 
 ### `DELETE /api/mode`
 
