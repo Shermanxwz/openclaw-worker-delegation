@@ -1,0 +1,41 @@
+name: openclaw-real-e2e
+
+on:
+  pull_request:
+    paths:
+      - "control-plane/**"
+      - ".github/workflows/openclaw-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openclaw-real-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-openclaw:
+    name: OpenClaw 2026.7.1-2 / Node 24
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.15.0"
+      - name: Install pinned official OpenClaw
+        run: npm install --global openclaw@2026.7.1-2
+      - name: Validate against a real Gateway
+        run: bash control-plane/test/openclaw/run-real-openclaw-e2e.sh
+      - name: Upload integration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-real-e2e-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/ocwd-real-openclaw/logs
+            ${{ runner.temp }}/ocwd-real-openclaw/markers
+            ${{ runner.temp }}/ocwd-real-openclaw/controller-data/events.ndjson
+          if-no-files-found: warn
+          retention-days: 7
