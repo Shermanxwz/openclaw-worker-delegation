@@ -1,0 +1,34 @@
+name: openclaw-plugin-smoke
+
+on:
+  pull_request:
+    paths:
+      - "control-plane/openclaw-plugin/**"
+      - ".github/workflows/openclaw-plugin-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.15.0"
+      - run: npm install --global openclaw@2026.7.1-2
+      - name: Validate, install and cold-inspect plugin
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export OPENCLAW_STATE_DIR="$RUNNER_TEMP/openclaw-plugin-smoke"
+          export OPENCLAW_CONFIG_PATH="$OPENCLAW_STATE_DIR/openclaw.json"
+          mkdir -p "$OPENCLAW_STATE_DIR"
+          printf '{}\n' > "$OPENCLAW_CONFIG_PATH"
+          openclaw plugins validate --entry "$GITHUB_WORKSPACE/control-plane/openclaw-plugin/index.mjs"
+          openclaw plugins install "$GITHUB_WORKSPACE/control-plane/openclaw-plugin" --link --force
+          openclaw plugins enable delegation-guard
+          openclaw plugins inspect delegation-guard --json
