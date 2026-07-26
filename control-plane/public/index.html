@@ -11,7 +11,7 @@
     <section id="login-view" class="card login-card hidden">
       <p class="eyebrow">OPENCLAW CONTROL PLANE</p>
       <h1>远程控制台</h1>
-      <p class="muted">登录后切换 Worker / Auto / Main 模式，并查看路由与越权事件。</p>
+      <p class="muted">登录后切换 Worker / Auto / Main 模式，并查看模型、路由与越权事件。</p>
       <form id="login-form">
         <label>控制台密码<input id="password" type="password" autocomplete="current-password" required></label>
         <button type="submit" class="primary">登录</button>
@@ -65,6 +65,33 @@
           <button class="mode-button main" data-mode="main"><strong>仅主控</strong><span>临时开放完整执行权限</span></button>
         </div>
         <p id="mode-message" class="muted"></p>
+      </section>
+
+      <section class="grid-two">
+        <article class="card">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">RUNTIME MODEL</p>
+              <h2 id="main-model">未上报</h2>
+              <p id="main-model-meta" class="muted">等待 OpenClaw 运行时心跳</p>
+            </div>
+            <span id="runtime-updated" class="badge">尚未上报</span>
+          </div>
+          <pre id="worker-models" class="result">暂无活跃 Worker 上报</pre>
+        </article>
+
+        <article class="card">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">ENFORCEMENT</p>
+              <h2 id="enforcement-state">ADVISORY</h2>
+              <p id="enforcement-detail" class="muted">尚未确认运行时已接入工具前置检查</p>
+            </div>
+          </div>
+          <pre class="result">HARD：OpenClaw 在每次工具调用前执行 /api/tool-check 并拒绝 allowed=false。
+
+ADVISORY：控制器只提供策略和监控，运行时仍可能绕过。</pre>
+        </article>
       </section>
 
       <section class="metrics" id="metrics"></section>
