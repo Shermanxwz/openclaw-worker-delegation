@@ -183,9 +183,10 @@ wait_http "http://127.0.0.1:$MODEL_PORT/v1/models" 30
 node "$CONTROL/src/server.mjs" >"$LOGS/controller.log" 2>&1 & CONTROL_PID=$!
 wait_http "http://127.0.0.1:$CONTROLLER_PORT/health/ready" 30
 
-openclaw config validate --json | tee "$LOGS/config-before-plugin.json"
-openclaw plugins install --link "$CONTROL/openclaw-plugin" --force | tee "$LOGS/plugin-install.log"
-openclaw plugins enable delegation-guard | tee "$LOGS/plugin-enable.log"
+openclaw config validate --json 2>&1 | tee "$LOGS/config-before-plugin.json"
+(cd "$CONTROL/openclaw-plugin" && openclaw plugins validate --entry ./index.mjs) 2>&1 | tee "$LOGS/plugin-validate.log"
+(cd "$CONTROL/openclaw-plugin" && openclaw plugins install --link .) 2>&1 | tee "$LOGS/plugin-install.log"
+openclaw plugins enable delegation-guard 2>&1 | tee "$LOGS/plugin-enable.log"
 
 node <<'NODE'
 const fs = require('fs');
@@ -213,8 +214,8 @@ config.plugins.entries['delegation-guard'] = {
 fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
 NODE
 
-openclaw config validate --json | tee "$LOGS/config-after-plugin.json"
-openclaw plugins inspect delegation-guard --runtime --json | tee "$LOGS/plugin-runtime-inspect.json"
+openclaw config validate --json 2>&1 | tee "$LOGS/config-after-plugin.json"
+openclaw plugins inspect delegation-guard --runtime --json 2>&1 | tee "$LOGS/plugin-runtime-inspect.json"
 grep -q 'before_prompt_build' "$LOGS/plugin-runtime-inspect.json"
 grep -q 'before_tool_call' "$LOGS/plugin-runtime-inspect.json"
 
@@ -241,17 +242,20 @@ mode() {
   curl -fsS -b "$COOKIE" -H 'content-type: application/json' -H "x-csrf-token: $CSRF" -X PUT -d "$body" "http://127.0.0.1:$CONTROLLER_PORT/api/mode"
 }
 
+# Auto: mutation/exec prompt must be routed to Worker, so Main's exec call is blocked.
 mode global '' auto > "$LOGS/mode-auto.json"
 run_agent "11111111-1111-4111-8111-111111111111" OCWD_BLOCK_MAIN_EXEC "$LOGS/auto-block.json" || true
 assert_file_absent "$MARKERS/main-block-bad"
 grep -q 'tool.blocked' "$DATA_DIR/events.ndjson"
 grep -q '"role":"main"' "$DATA_DIR/events.ndjson"
 
+# Worker mode: Main may spawn a real body-worker, whose real exec is allowed.
 mode global '' worker > "$LOGS/mode-worker.json"
 run_agent "22222222-2222-4222-8222-222222222222" OCWD_SPAWN_WORKER "$LOGS/worker-spawn.json"
 wait_file "$MARKERS/worker-exec-ok" 45
 assert_file_exists "$MARKERS/worker-exec-ok"
 
+# Main mode: Main exec is allowed and an existing Worker is frozen after switch.
 mode global '' main 15 > "$LOGS/mode-main.json"
 run_agent "33333333-3333-4333-8333-333333333333" OCWD_ALLOW_MAIN_EXEC "$LOGS/main-allow.json"
 assert_file_exists "$MARKERS/main-exec-ok"
@@ -265,6 +269,7 @@ sleep 9
 assert_file_absent "$MARKERS/worker-delayed-exec"
 grep -q '"role":"worker"' "$DATA_DIR/events.ndjson"
 
+# One-shot Main override is consumed for exactly one real run in a Worker session.
 mode global '' worker > "$LOGS/mode-worker-oneshot.json"
 ONE_SESSION="55555555-5555-4555-8555-555555555555"
 mode task "$ONE_SESSION" main 15 > "$LOGS/mode-task-main.json"
@@ -273,11 +278,13 @@ assert_file_exists "$MARKERS/one-shot-main-ok"
 run_agent "$ONE_SESSION" OCWD_ONE_SHOT_SECOND "$LOGS/one-shot-second.json" || true
 assert_file_absent "$MARKERS/one-shot-second-bad"
 
+# The real plugin must report models and earn HARD only through observed hooks.
 curl -fsS -b "$COOKIE" "http://127.0.0.1:$CONTROLLER_PORT/api/status?sessionId=$ONE_SESSION" > "$LOGS/controller-status.json"
 json_assert "$LOGS/controller-status.json" 'value.runtimeStatus.enforcement.hard === true'
 json_assert "$LOGS/controller-status.json" 'String(value.runtimeStatus.main.model || "").includes("mock-model")'
 json_assert "$LOGS/controller-status.json" 'Array.isArray(value.runtimeStatus.workers) && value.runtimeStatus.workers.some(w => String(w.model || "").includes("mock-model"))'
 
+# Controller loss: even Main mode must block every tool in fail-closed mode.
 mode global '' main 15 > "$LOGS/mode-main-offline.json"
 kill "$CONTROL_PID"; wait "$CONTROL_PID" || true; CONTROL_PID=""
 run_agent "66666666-6666-4666-8666-666666666666" OCWD_OFFLINE_EXEC "$LOGS/offline-exec.json" || true
