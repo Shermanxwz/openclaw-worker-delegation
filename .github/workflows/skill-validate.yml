@@ -95,10 +95,12 @@ jobs:
           import re, pathlib, sys
 
           # Lightweight scanner: catches obvious private hosts and credential
-          # shapes. This is NOT a replacement for gitleaks; the secret-scan
-          # workflow covers that. This is a structural guardrail.
+          # shapes. Loopback addresses are intentionally allowed because local
+          # bind examples such as 127.0.0.1 are safe and expected in docs.
+          # This is NOT a replacement for gitleaks; the secret-scan workflow
+          # covers that. This is a structural guardrail.
           patterns = [
-              ("private-ipv4", re.compile(r"\b(?:10|127|192\.168|172\.(?:1[6-9]|2\d|3[0-1]))\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")),
+              ("private-ipv4", re.compile(r"\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[0-1]))\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")),
               ("private-host-suffix", re.compile(r"\b[a-z0-9\-]+\.(?:internal|corp|lan|home|local)\b", re.IGNORECASE)),
               ("aws-key-shape", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
               ("pem-block", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----")),
