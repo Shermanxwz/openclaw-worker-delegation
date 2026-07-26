@@ -44,6 +44,39 @@ function renderMetrics(metrics = {}) {
   }));
 }
 
+function renderRuntime(runtime = {}) {
+  const main = runtime.main || {};
+  const workers = Array.isArray(runtime.workers) ? runtime.workers : [];
+  const enforcement = runtime.enforcement || {};
+
+  $('#main-model').textContent = main.model || '未上报';
+  const mainMeta = [
+    main.provider,
+    main.configuredModel && main.configuredModel !== main.model ? `配置：${main.configuredModel}` : '',
+    main.status ? `状态：${main.status}` : '',
+    main.sessionId ? `会话：${main.sessionId}` : '',
+  ].filter(Boolean);
+  $('#main-model-meta').textContent = mainMeta.join(' · ') || '等待 OpenClaw 运行时心跳';
+  $('#runtime-updated').textContent = runtime.updatedAt
+    ? `更新 ${new Date(runtime.updatedAt).toLocaleTimeString()}`
+    : '尚未上报';
+
+  $('#worker-models').textContent = workers.length
+    ? workers.map((worker) => {
+        const identity = worker.id || worker.role || 'worker';
+        const model = worker.model || '模型未上报';
+        const extras = [worker.role, worker.status, worker.provider].filter(Boolean).join(' · ');
+        return `${identity}: ${model}${extras ? `\n  ${extras}` : ''}`;
+      }).join('\n\n')
+    : '暂无活跃 Worker 上报';
+
+  const hard = enforcement.routeWired === true && enforcement.toolCheckWired === true;
+  $('#enforcement-state').textContent = hard ? 'HARD' : 'ADVISORY';
+  $('#enforcement-detail').textContent = hard
+    ? '路由和工具前置检查均由 OpenClaw 运行时执行'
+    : `运行时接入未完整确认 · route=${enforcement.routeWired === true ? 'yes' : 'no'} · toolCheck=${enforcement.toolCheckWired === true ? 'yes' : 'no'}`;
+}
+
 function compactEvent(event) {
   const copy = { ...event };
   delete copy.id;
@@ -90,6 +123,7 @@ async function refresh() {
   ]);
   $('#resolved-mode').textContent = status.resolvedMode.mode.toUpperCase();
   $('#mode-source').textContent = `来源：${status.resolvedMode.source}`;
+  renderRuntime(status.runtimeStatus);
   renderMetrics(status.metrics);
   $('#latest-route').textContent = renderRoute(status.latestRoute);
   renderEvents(eventData.events);
