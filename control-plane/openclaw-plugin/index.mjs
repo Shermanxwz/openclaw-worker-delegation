@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import net from 'node:net';
 import { definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry';
+import { resolveHookAgentId, resolveHookModel, resolveHookSessionId } from './runtime-identity.mjs';
 
 function list(value, fallback) {
   return Array.isArray(value) && value.length ? [...new Set(value.map(String).map((item) => item.trim()).filter(Boolean))] : fallback;
@@ -11,10 +12,6 @@ function roleFor(agentId, config) {
   if (config.workerAgentIds.includes(agentId)) return 'worker';
   if (config.verifierAgentIds.includes(agentId)) return 'verifier';
   return 'unknown';
-}
-
-function sessionIdentity(agentId, ctx = {}) {
-  return String(ctx.sessionId || ctx.sessionKey || `${agentId}:unknown`);
 }
 
 function isLoopbackController(value) {
@@ -106,14 +103,14 @@ export default definePluginEntry({
     }
 
     api.on('before_prompt_build', async (event, ctx) => {
-      const agentId = String(ctx.agentId || '');
+      const agentId = resolveHookAgentId(event, ctx);
       if (!agentId) return;
       try {
         const result = await request('/api/route', {
           hook: 'before_prompt_build',
           agentId,
           runId: ctx.runId || event.runId || '',
-          sessionId: ctx.sessionId || ctx.sessionKey || '',
+          sessionId: ctx.sessionId || ctx.sessionKey || event.sessionId || event.sessionKey || '',
           task: String(event.prompt || '').slice(0, 20_000),
         });
         const route = result.route || {};
@@ -129,14 +126,14 @@ export default definePluginEntry({
     }, { priority: 90, timeoutMs: Math.min(15_000, config.requestTimeoutMs + 1500) });
 
     api.on('before_tool_call', async (event, ctx) => {
-      const agentId = String(ctx.agentId || '');
+      const agentId = resolveHookAgentId(event, ctx);
       const tool = String(event.toolName || '');
       try {
         const result = await request('/api/tool-check', {
           hook: 'before_tool_call',
           agentId,
           runId: ctx.runId || event.runId || '',
-          sessionId: ctx.sessionId || ctx.sessionKey || '',
+          sessionId: ctx.sessionId || ctx.sessionKey || event.sessionId || event.sessionKey || '',
           tool,
           toolKind: event.toolKind || ctx.toolKind || null,
           toolInputKind: event.toolInputKind || ctx.toolInputKind || null,
@@ -152,37 +149,55 @@ export default definePluginEntry({
     }, { priority: 100, timeoutMs: Math.min(15_000, config.requestTimeoutMs + 1500) });
 
     api.on('after_tool_call', async (event, ctx) => {
+      const agentId = resolveHookAgentId(event, ctx);
       try {
         await request('/api/events', {
           type: event.error ? 'tool.failed' : 'tool.completed',
-          agentId: ctx.agentId || null,
-          role: roleFor(String(ctx.agentId || ''), config),
+          agentId: agentId || null,
+          role: roleFor(agentId, config),
           tool: event.toolName || null,
           runId: ctx.runId || event.runId || null,
-          sessionId: ctx.sessionId || ctx.sessionKey || null,
+          sessionId: ctx.sessionId || ctx.sessionKey || event.sessionId || event.sessionKey || null,
           durationMs: event.durationMs || null,
         });
       } catch {}
     });
 
     api.on('model_call_started', async (event, ctx) => {
-      const agentId = String(ctx.agentId || 'unknown');
-      const key = sessionIdentity(agentId, ctx);
+      const agentId = resolveHookAgentId(event, ctx);
+      const sessionId = resolveHookSessionId(event, ctx, agentId);
+      const identity = resolveHookModel(event, ctx);
+      const key = sessionId || `${agentId || 'unknown'}:${event.runId || event.callId || crypto.randomUUID()}`;
       models.set(key, {
-        agentId, id: key, role: roleFor(agentId, config), model: event.model || null,
-        configuredModel: configuredModelFor(agentId), provider: event.provider || null,
-        status: 'running', sessionId: ctx.sessionId || ctx.sessionKey || null,
+        agentId: agentId || null,
+        id: key,
+        role: roleFor(agentId, config),
+        model: identity.model || null,
+        configuredModel: agentId ? configuredModelFor(agentId) : null,
+        provider: identity.provider || null,
+        status: 'running',
+        sessionId: sessionId || null,
       });
       await publishRuntime();
     });
 
     api.on('model_call_ended', async (event, ctx) => {
-      const agentId = String(ctx.agentId || 'unknown');
-      const key = sessionIdentity(agentId, ctx);
-      const existing = models.get(key) || { agentId, id: key, role: roleFor(agentId, config), configuredModel: configuredModelFor(agentId) };
+      const agentId = resolveHookAgentId(event, ctx);
+      const sessionId = resolveHookSessionId(event, ctx, agentId);
+      const identity = resolveHookModel(event, ctx);
+      const key = sessionId || `${agentId || 'unknown'}:${event.runId || event.callId || crypto.randomUUID()}`;
+      const existing = models.get(key) || {
+        agentId: agentId || null,
+        id: key,
+        role: roleFor(agentId, config),
+        configuredModel: agentId ? configuredModelFor(agentId) : null,
+      };
       models.set(key, {
-        ...existing, model: event.model || existing.model || null, provider: event.provider || existing.provider || null,
-        status: event.outcome === 'error' ? 'error' : 'idle', sessionId: ctx.sessionId || ctx.sessionKey || existing.sessionId || null,
+        ...existing,
+        model: identity.model || existing.model || null,
+        provider: identity.provider || existing.provider || null,
+        status: event.outcome === 'error' ? 'error' : 'idle',
+        sessionId: sessionId || existing.sessionId || null,
       });
       await publishRuntime();
     });
