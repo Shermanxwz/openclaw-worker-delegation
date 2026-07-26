@@ -1,4 +1,5 @@
 const state = { csrf: '', source: null, runtimeSessionId: '', pendingMain: null, totpRequired: false };
+const storageKey = 'ocwd.scope.v1';
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
@@ -19,9 +20,25 @@ function show(view) {
   $('#dashboard').classList.toggle('hidden', view !== 'dashboard');
 }
 
+function selectedContext() {
+  return { scope: $('#scope').value, id: $('#scope-id').value.trim() };
+}
+
+function persistContext() {
+  try { localStorage.setItem(storageKey, JSON.stringify(selectedContext())); } catch {}
+}
+
+function restoreContext() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(storageKey) || 'null'); } catch {}
+  const scope = ['global', 'project', 'session', 'task'].includes(saved?.scope) ? saved.scope : 'global';
+  $('#scope').value = scope;
+  $('#scope-id-label').classList.toggle('hidden', scope === 'global');
+  $('#scope-id').value = typeof saved?.id === 'string' ? saved.id : '';
+}
+
 function contextQuery() {
-  const scope = $('#scope').value;
-  const id = $('#scope-id').value.trim();
+  const { scope, id } = selectedContext();
   if (scope === 'session' || scope === 'task') return `?sessionId=${encodeURIComponent(id)}`;
   if (scope === 'project') return `?projectId=${encodeURIComponent(id)}`;
   return '';
@@ -104,6 +121,7 @@ function connectEvents() {
 
 async function setMode(mode, reauthPassword = '', reauthTotp = '') {
   const scope = $('#scope').value; const id = scope === 'global' ? '' : $('#scope-id').value.trim();
+  persistContext();
   if (!id && scope !== 'global') throw new Error('scope_id_required');
   const result = await api('/api/mode', { method: 'PUT', body: JSON.stringify({ mode, scope, id, ttlMinutes: Number($('#ttl').value), reauthPassword, reauthTotp, confirmation: mode === 'main' ? 'ENABLE_MAIN' : undefined }) });
   $('#mode-message').textContent = `已切换为 ${result.entry.mode.toUpperCase()}${result.entry.expiresAt ? `，到期 ${new Date(result.entry.expiresAt).toLocaleString()}` : ''}`;
@@ -117,10 +135,10 @@ $('#login-form').addEventListener('submit', async (event) => {
 });
 
 $('#logout').addEventListener('click', async () => { await api('/api/logout', { method: 'POST', body: '{}' }).catch(() => {}); state.source?.close(); state.csrf = ''; show('login'); });
-$('#scope').addEventListener('change', () => { $('#scope-id-label').classList.toggle('hidden', $('#scope').value === 'global'); refresh().catch(() => {}); });
-$('#scope-id').addEventListener('change', () => refresh().catch(() => {}));
+$('#scope').addEventListener('change', () => { $('#scope-id-label').classList.toggle('hidden', $('#scope').value === 'global'); persistContext(); refresh().catch(() => {}); });
+$('#scope-id').addEventListener('change', () => { persistContext(); refresh().catch(() => {}); });
 $('#refresh').addEventListener('click', () => refresh().catch((error) => { $('#connection').textContent = `刷新失败：${error.message}`; }));
-$('#use-runtime-session').addEventListener('click', () => { if (state.runtimeSessionId) { $('#scope').value = 'session'; $('#scope-id-label').classList.remove('hidden'); $('#scope-id').value = state.runtimeSessionId; refresh().catch(() => {}); } else $('#mode-message').textContent = '运行时尚未上报会话 ID。'; });
+$('#use-runtime-session').addEventListener('click', () => { if (state.runtimeSessionId) { $('#scope').value = 'session'; $('#scope-id-label').classList.remove('hidden'); $('#scope-id').value = state.runtimeSessionId; persistContext(); refresh().catch(() => {}); } else $('#mode-message').textContent = '运行时尚未上报会话 ID。'; });
 $('#clear-override').addEventListener('click', async () => { const scope = $('#scope').value; const id = $('#scope-id').value.trim(); if (!['task', 'session', 'project'].includes(scope) || !id) return; try { await api('/api/mode', { method: 'DELETE', body: JSON.stringify({ scope, id }) }); $('#mode-message').textContent = '已清除覆盖。'; await refresh(); } catch (error) { $('#mode-message').textContent = `清除失败：${error.message}`; } });
 
 $$('.mode-button').forEach((button) => button.addEventListener('click', async () => {
@@ -145,6 +163,7 @@ $('#route-form').addEventListener('submit', async (event) => {
 });
 
 (async () => {
+  restoreContext();
   try {
     const loginConfig = await api('/api/login-config');
     state.totpRequired = loginConfig.totpRequired === true;

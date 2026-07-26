@@ -55,6 +55,41 @@ test('controller restart clears old hook observations', async () => {
   assert.equal(restarted.enforcementSnapshot().hard, false);
 });
 
+test('low-signal runtime heartbeat does not overwrite fresh real runtime identity', async () => {
+  let now = 1_700_000_000_000;
+  const { store } = await tempStore({ now: () => now });
+  await store.updateRuntimeStatus({
+    instanceId: 'gateway-instance',
+    pluginLoaded: true,
+    main: { model: 'gpt-5.5', provider: 'new-api', sessionId: 's1', agentId: 'main' },
+    sessionId: 's1',
+    enforcement: { routeWired: true, toolCheckWired: true },
+  });
+  await store.markRouteObserved({ instanceId: 'gateway-instance', runId: 'r1', agentId: 'main', route: { actor: 'main' } });
+  await store.markToolCheckObserved({ instanceId: 'gateway-instance' });
+  assert.equal(store.enforcementSnapshot().hard, true);
+
+  const ignored = await store.updateRuntimeStatus({
+    instanceId: 'inspect-instance',
+    pluginLoaded: true,
+    main: { configuredModel: 'new-api/gpt-5.5', agentId: 'main' },
+    enforcement: { routeWired: true, toolCheckWired: true },
+  });
+  assert.equal(ignored.instanceId, 'gateway-instance');
+  assert.equal(store.state.runtime.main.model, 'gpt-5.5');
+  assert.equal(store.enforcementSnapshot().hard, true);
+
+  await store.updateRuntimeStatus({
+    instanceId: 'new-gateway-instance',
+    pluginLoaded: true,
+    main: { model: 'gpt-5.5', sessionId: 's2', agentId: 'main' },
+    sessionId: 's2',
+    enforcement: { routeWired: true, toolCheckWired: true },
+  });
+  assert.equal(store.state.runtime.instanceId, 'new-gateway-instance');
+  assert.equal(store.enforcementSnapshot().hard, false);
+});
+
 test('route binding rejects agent or session substitution', async () => {
   const { store } = await tempStore();
   await store.markRouteObserved({ runId: 'r1', agentId: 'main', sessionId: 's1', route: { actor: 'worker' } });

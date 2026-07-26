@@ -182,20 +182,33 @@ export class StateStore {
     })) : [];
     const previousFingerprint = JSON.stringify({ main: this.state.runtime.main, workers: this.state.runtime.workers, instanceId: this.state.runtime.instanceId, reported: this.state.runtime.reportedEnforcement });
     const normalizedInstanceId = cleanText(instanceId, 100);
-    const instanceChanged = normalizedInstanceId && normalizedInstanceId !== this.state.runtime.instanceId;
+    const normalizedMain = {
+      model: cleanText(main.model), configuredModel: cleanText(main.configuredModel), provider: cleanText(main.provider),
+      status: cleanText(main.status) || 'unknown', sessionId: cleanText(main.sessionId || sessionId), agentId: cleanText(main.agentId),
+    };
+    const normalizedSessionId = cleanText(sessionId);
+    const normalizedProjectId = cleanText(projectId);
+    const currentRuntime = this.state.runtime || emptyRuntimeStatus();
+    const currentUpdatedAt = currentRuntime.updatedAt ? Date.parse(currentRuntime.updatedAt) : 0;
+    const currentFresh = Boolean(currentUpdatedAt && this.now() - currentUpdatedAt <= this.runtimeStaleMs);
+    const currentObserved = currentRuntime.observedEnforcement || {};
+    const incomingHasRuntimeIdentity = Boolean(normalizedMain.model || normalizedMain.provider || normalizedMain.sessionId || normalizedSessionId || normalizedWorkers.length);
+    const currentHasRuntimeIdentity = Boolean(currentRuntime.main?.model || currentRuntime.main?.provider || currentRuntime.main?.sessionId || currentRuntime.sessionId || currentRuntime.workers?.length || currentObserved.routeAt || currentObserved.toolCheckAt);
+    const incomingIsDifferentLowSignalInstance = normalizedInstanceId && normalizedInstanceId !== currentRuntime.instanceId && !incomingHasRuntimeIdentity;
+    if (currentFresh && currentHasRuntimeIdentity && incomingIsDifferentLowSignalInstance) {
+      return clone(currentRuntime);
+    }
+    const instanceChanged = normalizedInstanceId && normalizedInstanceId !== currentRuntime.instanceId;
     this.state.runtime = {
       instanceId: normalizedInstanceId,
       pluginLoaded: pluginLoaded === true,
-      main: {
-        model: cleanText(main.model), configuredModel: cleanText(main.configuredModel), provider: cleanText(main.provider),
-        status: cleanText(main.status) || 'unknown', sessionId: cleanText(main.sessionId || sessionId), agentId: cleanText(main.agentId),
-      },
+      main: normalizedMain,
       workers: normalizedWorkers,
       reportedEnforcement: { routeWired: enforcement.routeWired === true, toolCheckWired: enforcement.toolCheckWired === true },
       observedEnforcement: instanceChanged
         ? { routeAt: null, toolCheckAt: null, instanceId: normalizedInstanceId }
-        : { ...this.state.runtime.observedEnforcement, instanceId: normalizedInstanceId || this.state.runtime.observedEnforcement.instanceId },
-      sessionId: cleanText(sessionId), projectId: cleanText(projectId), updatedAt: new Date(this.now()).toISOString(), source: cleanText(source) || 'openclaw-plugin',
+        : { ...currentRuntime.observedEnforcement, instanceId: normalizedInstanceId || currentRuntime.observedEnforcement.instanceId },
+      sessionId: normalizedSessionId, projectId: normalizedProjectId, updatedAt: new Date(this.now()).toISOString(), source: cleanText(source) || 'openclaw-plugin',
     };
     await this.persistState();
     const nextFingerprint = JSON.stringify({ main: this.state.runtime.main, workers: this.state.runtime.workers, instanceId: this.state.runtime.instanceId, reported: this.state.runtime.reportedEnforcement });
