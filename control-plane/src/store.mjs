@@ -9,6 +9,33 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function emptyRuntimeStatus() {
+  return {
+    main: {
+      model: null,
+      configuredModel: null,
+      provider: null,
+      status: 'unknown',
+      sessionId: null,
+    },
+    workers: [],
+    enforcement: {
+      routeWired: false,
+      toolCheckWired: false,
+    },
+    sessionId: null,
+    projectId: null,
+    updatedAt: null,
+    source: null,
+  };
+}
+
+function cleanText(value, maxLength = 200) {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  return text ? text.slice(0, maxLength) : null;
+}
+
 export class StateStore {
   constructor({ dataDir, defaultMode = 'auto', maxEvents = 1000, now = () => Date.now() }) {
     this.dataDir = dataDir;
@@ -19,10 +46,11 @@ export class StateStore {
     this.now = now;
     this.listeners = new Set();
     this.state = {
-      version: 1,
+      version: 2,
       global: { mode: defaultMode, updatedAt: new Date(now()).toISOString(), actor: 'bootstrap' },
       projects: {},
       sessions: {},
+      runtime: emptyRuntimeStatus(),
     };
     this.events = [];
   }
@@ -30,7 +58,26 @@ export class StateStore {
   async init() {
     await fs.mkdir(this.dataDir, { recursive: true, mode: 0o700 });
     try {
-      this.state = JSON.parse(await fs.readFile(this.statePath, 'utf8'));
+      const loaded = JSON.parse(await fs.readFile(this.statePath, 'utf8'));
+      this.state = {
+        ...this.state,
+        ...loaded,
+        projects: loaded.projects || {},
+        sessions: loaded.sessions || {},
+        runtime: {
+          ...emptyRuntimeStatus(),
+          ...(loaded.runtime || {}),
+          main: {
+            ...emptyRuntimeStatus().main,
+            ...(loaded.runtime?.main || {}),
+          },
+          enforcement: {
+            ...emptyRuntimeStatus().enforcement,
+            ...(loaded.runtime?.enforcement || {}),
+          },
+          workers: Array.isArray(loaded.runtime?.workers) ? loaded.runtime.workers : [],
+        },
+      };
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
       await this.persistState();
@@ -114,6 +161,52 @@ export class StateStore {
     await this.appendEvent({ type: 'mode.cleared', scope, scopeId: id, actor });
   }
 
+  async updateRuntimeStatus({ main = {}, workers = [], enforcement = {}, sessionId = '', projectId = '', source = 'openclaw-runtime' } = {}) {
+    const normalizedWorkers = Array.isArray(workers)
+      ? workers.slice(0, 100).map((worker = {}) => ({
+          id: cleanText(worker.id),
+          model: cleanText(worker.model),
+          configuredModel: cleanText(worker.configuredModel),
+          provider: cleanText(worker.provider),
+          role: cleanText(worker.role) || 'worker',
+          status: cleanText(worker.status) || 'unknown',
+          sessionId: cleanText(worker.sessionId),
+        }))
+      : [];
+
+    this.state.runtime = {
+      main: {
+        model: cleanText(main.model),
+        configuredModel: cleanText(main.configuredModel),
+        provider: cleanText(main.provider),
+        status: cleanText(main.status) || 'unknown',
+        sessionId: cleanText(main.sessionId || sessionId),
+      },
+      workers: normalizedWorkers,
+      enforcement: {
+        routeWired: enforcement.routeWired === true,
+        toolCheckWired: enforcement.toolCheckWired === true,
+      },
+      sessionId: cleanText(sessionId),
+      projectId: cleanText(projectId),
+      updatedAt: new Date(this.now()).toISOString(),
+      source: cleanText(source) || 'openclaw-runtime',
+    };
+
+    await this.persistState();
+    await this.appendEvent({
+      type: 'runtime.status',
+      mainModel: this.state.runtime.main.model,
+      mainStatus: this.state.runtime.main.status,
+      activeWorkers: normalizedWorkers.filter((worker) => worker.status === 'running').length,
+      workerModels: [...new Set(normalizedWorkers.map((worker) => worker.model).filter(Boolean))],
+      enforcement: this.state.runtime.enforcement,
+      sessionId: this.state.runtime.sessionId,
+      projectId: this.state.runtime.projectId,
+    });
+    return clone(this.state.runtime);
+  }
+
   async appendEvent(event) {
     const normalized = {
       id: event.id || crypto.randomUUID(),
@@ -150,6 +243,7 @@ export class StateStore {
       globalMode: clone(this.state.global),
       projectMode: projectId ? clone(this.state.projects[projectId] || null) : null,
       sessionMode: sessionId ? clone(this.state.sessions[sessionId] || null) : null,
+      runtimeStatus: clone(this.state.runtime || emptyRuntimeStatus()),
       metrics,
       latestRoute: clone(this.events.slice().reverse().find((event) => event.type === 'route.decided') || null),
     };
