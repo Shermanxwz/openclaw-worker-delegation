@@ -16,8 +16,10 @@ The new `control-plane/` application turns delegation from prompt advice into ex
 - Deterministic routing scores and readable decision reasons.
 - A policy endpoint for main, worker, and verifier tool sets.
 - A mandatory pre-tool-check endpoint for hard runtime enforcement.
+- Runtime heartbeat reporting for the active main model, configured model, provider, workers and enforcement wiring.
 - Event ingestion for route, worker, verification, attempted and blocked tool calls.
 - A mobile-friendly web panel with live SSE updates.
+- Visible `HARD` versus `ADVISORY` enforcement state in the Web panel.
 - Password login, server-side sessions, CSRF protection, Origin checks, login throttling, redaction and security headers.
 - Loopback-only controller binding with Caddy and direct-public-IP Nginx deployment examples.
 - Zero third-party runtime dependencies; Node.js 20+ is sufficient.
@@ -38,6 +40,7 @@ Delegation Control Plane :8787
     |-- router
     |-- permission policy
     |-- tool gate
+    |-- runtime/model status
     |-- event stream
     `-- mobile web panel
           |
@@ -49,6 +52,27 @@ OpenClaw runtime adapter
 ```
 
 The runtime adapter is the enforcement point. It must call `/api/tool-check` before every tool invocation and refuse blocked actions. A runtime that only reads the policy but ignores the result remains advisory.
+
+### Important: what is still runtime integration work
+
+The repository contains the controller, API, Web panel and a runtime-neutral adapter, but it cannot patch an arbitrary OpenClaw installation automatically. For actual hard enforcement, the deployed OpenClaw agent loop still must:
+
+1. call `/api/route` before choosing main versus worker;
+2. call `/api/tool-check` before every tool execution;
+3. refuse execution whenever `allowed` is `false`;
+4. report the active main/worker models through `/api/runtime-status`;
+5. publish worker and tool lifecycle events.
+
+The Web panel shows `HARD` only when the runtime reports that both route and tool-check integration are wired. Otherwise it shows `ADVISORY`. It also shows `未上报` instead of guessing the current model.
+
+Implementation checklist:
+
+- [x] Control plane, router, policies and tool-check API.
+- [x] Mobile Web panel and model/enforcement display.
+- [x] Runtime-neutral client at `control-plane/integration/openclaw-sidecar-hook.mjs`.
+- [ ] Connect that client to the actual OpenClaw agent loop used on the target VPS.
+- [ ] Verify that no tool can execute after `allowed: false`.
+- [ ] Send model heartbeats on startup, fallback, switch and worker lifecycle changes.
 
 ## Quick start
 
@@ -112,6 +136,7 @@ Agent bearer-token endpoints:
 POST /api/route
 POST /api/policy
 POST /api/tool-check
+POST /api/runtime-status
 POST /api/events
 ```
 
