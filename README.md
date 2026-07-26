@@ -2,21 +2,23 @@
 
 A three-mode delegation controller for OpenClaw: keep Main as coordinator, send body-work to Workers, or temporarily let Main take over — with a phone-friendly Web panel, current-model visibility, and a native pre-tool enforcement plugin.
 
-> The repository's `main` branch remains the stable v0.1.1 documentation-only project. Development of the v0.2 runtime is isolated on `agent/control-plane-mvp` and proposed through PR #1.
+> **v0.2.0 is the current mainline.** This repository's `main` branch now ships the control-plane runtime, the native OpenClaw `delegation-guard` plugin, the phone-friendly Web panel, and the `adaptive-worker-delegation` skill. The legacy v0.1.1 documentation-only tree lives on the `agent/control-plane-mvp` branch as a historical reference until that branch is archived.
 
 ## What v0.2 adds
 
-- One-click `WORKER`, `AUTO`, and time-bounded `MAIN` modes.
+- Externally controlled `WORKER`, `AUTO`, and time-bounded `MAIN` modes selected from the Web panel or API.
+- A native OpenClaw `delegation-guard` plugin that uses `before_prompt_build` and terminal `before_tool_call` blocking, so the controller (not the model) is the authority for routing and tool decisions.
+- An `adaptive-worker-delegation` skill (v0.2.0) that replaces the retired `model-aware-worker-delegation` heuristic and routes through the controller.
+- Distinct `body-worker` and `verifier` roles with a host-derived run/session route binding; the `verifier` is read-only by default.
+- Explicit `HARD` versus `ADVISORY` enforcement state based on real `before_prompt_build` and `before_tool_call` observations from a fresh plugin instance, never on a startup heartbeat.
+- Password re-authentication, optional TOTP, CSRF/Origin checks, rate limits, bounded sessions/SSE/logs, hardened deployment examples, and a sandbox-friendly deployment guide.
+- 43 unit/integration tests under `control-plane/`, all green on Node 20 and 22.
+- Zero third-party runtime dependencies for the controller; Node.js 20+.
+- A pinned real-OpenClaw end-to-end test using OpenClaw `2026.7.1-2` and Node.js `24.15.0`.
 - One-shot task, session, project, and global mode precedence.
 - Mobile Web panel over normal public-IP HTTPS; no Cloudflare or Tailscale dependency.
 - Current Main model, provider, session, Worker models, and heartbeat freshness.
 - Deterministic bilingual routing with explanations.
-- A native OpenClaw plugin that uses `before_prompt_build` and terminal `before_tool_call` blocking.
-- Host-derived agent roles, run/session route binding, fail-closed behavior, and auditable allowed/blocked calls.
-- Explicit `HARD` versus `ADVISORY` state based on real hook observations, not a checkbox or startup claim.
-- Password re-authentication, optional TOTP, CSRF/Origin checks, rate limits, bounded sessions/SSE/logs, and hardened deployment examples.
-- Zero third-party runtime dependencies for the controller; Node.js 20+.
-- A pinned real-OpenClaw end-to-end test using OpenClaw `2026.7.1-2` and Node.js `24.15.0`.
 
 ## Modes
 
@@ -128,7 +130,7 @@ control-plane/
     └── openclaw/                # pinned real-Gateway E2E harness
 
 skills/
-└── adaptive-worker-delegation/  # v0.2 behavior guidance (replaces retired model-aware-worker-delegation)
+└── adaptive-worker-delegation/  # v0.2.0 skill: obeys controller route/policy, retired model-aware heuristic
 ```
 
 ## Security boundary

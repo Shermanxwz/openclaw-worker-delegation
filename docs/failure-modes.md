@@ -1,14 +1,14 @@
-# Failure modes and recovery
+# Failure modes and recovery (v0.2 control-plane)
 
-The skill is small but the failure surface isn't. This doc catalogues what goes wrong, what it looks like, and what to do.
+The control plane is small but the failure surface isn't. This doc catalogues what goes wrong, what it looks like, and what to do — assuming the controller + native `delegation-guard` plugin is in charge of routing and tool decisions.
 
 ## 1. "I spawned a worker for a question I could've answered"
 
 **Looks like**: a worker came back with a one-line answer and the brief was longer than the answer.
 
-**Fix**: tighten the trigger table in your head. Anything that fits in the main session's context and isn't retry-prone is light. Light = do in main.
+**Fix**: tighten the trigger table in your head. Anything that fits in the main session's context and isn't retry-prone is light. Light = do in main. The controller's `AUTO` router will return a Main-routed path for these, but agents sometimes pre-empt the router; trust the route.
 
-**Prevention**: re-read the *Do not delegate for* list in `SKILL.md` before spawning.
+**Prevention**: re-read the *Do not delegate for* list in `skills/adaptive-worker-delegation/SKILL.md` before spawning.
 
 ## 2. "I spawned a same-model worker for serial work"
 
@@ -16,7 +16,7 @@ The skill is small but the failure surface isn't. This doc catalogues what goes 
 
 **Fix**: kill the worker, do the work in main, and add the failure to your mental trigger table.
 
-**Prevention**: check the current model *before* every spawn. If `main == worker.model` and there's no real parallelism/isolation/long-bg/clean-subproblem reason, don't spawn.
+**Prevention**: check `/api/state` and the current model *before* every spawn. If `main == worker.model` and there's no real parallelism/isolation/long-bg/clean-subproblem reason, don't spawn.
 
 ## 3. "Worker came back without verifying"
 
@@ -24,7 +24,7 @@ The skill is small but the failure surface isn't. This doc catalogues what goes 
 
 **Fix**: brief was missing the **Verify** field. Send a focused retry — paste the current brief back, mark Verify as the only thing the worker skipped, demand a specific command and its output.
 
-**Prevention**: every brief includes Verify. No exceptions.
+**Prevention**: every brief includes Verify. No exceptions. The controller's `before_tool_call` will not catch a missing Verify for you — that is a brief-discipline problem, not a policy problem.
 
 ## 4. "Worker rewrote things outside Scope"
 
@@ -32,7 +32,7 @@ The skill is small but the failure surface isn't. This doc catalogues what goes 
 
 **Fix**: revert out-of-scope changes, keep what's inside Scope, send the worker a "scope discipline" note before any retry.
 
-**Prevention**: write Scope as concrete paths or globs. Avoid phrases like "wherever it's needed".
+**Prevention**: write Scope as concrete paths or globs. Avoid phrases like "wherever it's needed". Note that the controller's tool gate checks scope on every call — if the worker is bypassing it, the plugin is in `ADVISORY` (or the worker is forging scope), and that itself is a failure to investigate.
 
 ## 5. "Two consecutive failures on the same problem"
 
@@ -40,10 +40,11 @@ The skill is small but the failure surface isn't. This doc catalogues what goes 
 
 **Fix**: stop. Apply the failure rule.
 
-| Current model | Action |
+| Current model / mode | Action |
 | --- | --- |
-| Strong model | Delegate to cheap worker with a focused brief + minimal reproduction |
-| Cheap model | Isolate a smaller subproblem or build a scratch reproduction. Spawn only for true isolation/parallelism |
+| Strong model, route returns Worker | Re-brief a fresh worker with a tighter scope and a smaller reproduction |
+| Cheap model, route returns Main | Isolate a smaller subproblem or build a scratch reproduction. Spawn only for true isolation/parallelism |
+| `MAIN` mode active | Re-brief with a different scope/profile; do not silently retry the same patch in main |
 
 **Prevention**: keep a counter. Two in a row = forced strategy change. Don't let retry mood decide.
 
@@ -61,7 +62,7 @@ The skill is small but the failure surface isn't. This doc catalogues what goes 
 
 **Fix**: revert the side effect, add an explicit **Do not** to the brief, retry with the same scope and a tightened Do-not list.
 
-**Prevention**: every brief includes Do not. Destructive verbs (`rm`, `mkfs`, `git push --force`, `kubectl delete`, public posting) belong in Do not unless explicitly authorised in the same brief.
+**Prevention**: every brief includes Do not. Destructive verbs (`rm`, `mkfs`, `git push --force`, `kubectl delete`, public posting) belong in Do not unless explicitly authorised in the same brief. The controller's `before_tool_call` gate does not know that "clean up" implies `rm -rf` — be explicit.
 
 ## 8. "Worker is too expensive — the strong model would have been cheaper"
 
@@ -87,6 +88,22 @@ The skill is small but the failure surface isn't. This doc catalogues what goes 
 
 **Prevention**: never spawn a worker without first reading the previous worker's output, if one exists for the same task.
 
+## 11. "Panel says ADVISORY when I thought I had HARD"
+
+**Looks like**: `/api/state` reports `enforcement: ADVISORY` for a long stretch, but the controller and plugin both look up.
+
+**Fix**: the native `delegation-guard` plugin has not yet reported a fresh `before_prompt_build` *and* `before_tool_call` observation from the same fresh instance. Common causes: the plugin is not actually installed/enabled, the controller URL/token in the plugin config is wrong, the OpenClaw Gateway has not restarted after enabling, or the heartbeat source is the controller itself (which does not count as a real hook observation).
+
+**Prevention**: after enabling the plugin, run `openclaw plugins inspect delegation-guard --runtime --json` and confirm the registered hooks. Wait for `HARD` before trusting any tool result. CI in this repo runs a real-Gateway E2E that exercises the full HARD transition.
+
+## 12. "Worker bypassed the controller"
+
+**Looks like**: a tool call succeeded that should have been blocked, or `/api/audit` shows the call happened with no matching `before_tool_call` event.
+
+**Fix**: the controller is fail-closed by default, but a misconfigured plugin can be in `ADVISORY` (returning allow without consulting the controller) or outright skipped. Re-check the plugin install, the `OCWD_AGENT_TOKEN` match between Gateway and controller, and the plugin's `controllerUrl`. If the controller is unreachable, no tool should be allowed; if it is reachable and still allowed a denied call, that is a controller bug — file an issue with the audit log.
+
+**Prevention**: never trust a tool result while the panel is `ADVISORY`. Run the deployment validation script (`control-plane/scripts/validate-deployment.sh`) before going live.
+
 ---
 
 ## Long-form recovery playbook
@@ -94,7 +111,7 @@ The skill is small but the failure surface isn't. This doc catalogues what goes 
 When something is clearly broken and the simple fixes above don't apply:
 
 1. **Stop the loop.** Cancel pending work, kill spawned workers, snapshot the state.
-2. **Inspect.** What was the brief, what did the worker actually do, what does main know?
+2. **Inspect.** What was the brief, what did the worker actually do, what does main know? Pull `/api/state` and the relevant slice of `/api/audit`.
 3. **Re-classify.** Is the task still the same task, or did it drift? If drifted, redraft the brief.
 4. **Re-tier.** Is the current model the right tier for this problem now that you know more? Switch if not.
 5. **Re-spawn or finish.** Re-spawn with a smaller, focused brief — or finish in main if it's small enough now.

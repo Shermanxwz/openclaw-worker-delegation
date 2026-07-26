@@ -3,15 +3,19 @@
   Replace <strong-model> and <worker-model> with the pair you actually run.
 -->
 
-## Model-aware worker delegation
+## Adaptive worker delegation (v0.2 control-plane)
 
-Before doing heavy work, check the current runtime model.
+Mode and tool permissions are decided by the OpenClaw control plane (the controller + native `delegation-guard` plugin). Do **not** reconstruct them from the active model, fallback behavior, prior turns, or chat history.
 
-- If main is on **<strong-model>** (planner/reviewer) → delegate body-work to **<worker-model>** (cheap worker).
-- If main has already fallen back to **<worker-model>** → do the work directly. Don't spawn a same-model shadow worker for serial work.
-- Spawn a worker while already on the cheap model **only** for parallelism, isolation, long background runs, or clearly separable subproblems.
+- Before doing heavy work, ask the controller for the authoritative route (`/api/route`) and obey the returned decision.
+- Before every tool call, ask the controller for the tool decision (`/api/tool-check`) and treat `block: true` as terminal.
+- Modes you may see on the panel: `WORKER` (Main is coordination-only; Workers execute), `AUTO` (router decides per task), and time-bounded `MAIN` (Main executes directly; Workers frozen).
+- Spawn a worker from Main only when the controller route returns a delegated path, or when the active `AUTO` route explicitly delegates. Do not spawn because the strong model "felt like it".
+- Model fallback (e.g. main falls back to the worker model) **never** changes role permissions. A blocked call stays blocked regardless of which model produced it.
 
-### Delegate when on the strong model
+### Delegate when the route says so
+
+The controller's router picks Worker for:
 
 - Writing or modifying scripts, code, or configs.
 - Fixing shell/Python quoting, fragile command syntax, or parse errors.
@@ -22,10 +26,9 @@ Before doing heavy work, check the current runtime model.
 
 ### Do it in main when
 
-- It's a simple Q&A or one short read.
-- A single low-risk command or a one-line verification.
-- A tiny deterministic edit that's easy to confirm.
-- Main is already on the worker model and there's no parallelism/isolation win.
+- The controller route returns a Main-routed light task.
+- It's a simple Q&A, one short read, a single low-risk command, or a one-line deterministic edit.
+- The current mode is `MAIN` (time-bounded) and the task fits within that window.
 
 ### Worker brief, minimum viable
 
@@ -36,12 +39,16 @@ Do not:    <destructive or external actions without approval>
 Context:   <minimal facts needed>
 Output:    <summary + changed files / commands / tests>
 Verify:    <specific test / lint / build / inspection>
+Risk:      <low | medium | high, with reason>
 ```
+
+The controller checks scope, tools, and policy; it does not read the brief prose. A missing Scope or Verify is a policy risk, not just a documentation nicety.
 
 ### Failure rule
 
-If main has **two consecutive** patch/command failures on the same problem:
+If a worker (or main, when in `MAIN` mode) has **two consecutive** patch/command failures on the same problem:
 
 1. Stop direct trial-and-error.
-2. If currently on the strong model → delegate to the worker.
-3. If already on the worker model → change strategy: isolate a smaller subproblem, build a scratch reproduction, or spawn only when you need isolation/parallelism.
+2. Re-brief with a tighter scope, a smaller reproduction, or a different worker profile (e.g. `scout` for read-only scans, `body-worker` for mutations).
+3. If the controller route changes after the failure, follow the new route. Do not assume the previous decision still applies.
+4. A blocked tool call from the controller is final — do not search for an equivalent bypass or re-issue the call under a different `agentId`/`runId`.

@@ -1,8 +1,8 @@
-# Worker brief template
+# Worker brief template (v0.2 control-plane)
 
-A short, complete brief is the difference between a worker that finishes in one shot and a worker that comes back asking "what do you actually want?".
+A short, complete brief is the difference between a worker that finishes in one shot and a worker that comes back asking "what do you actually want?". The control plane's `/api/tool-check` reads Scope, Do not, and Risk on every call, so missing fields are a policy risk, not just a documentation nicety.
 
-Copy this block and fill every field. Missing fields default to ambiguity.
+Copy this block and fill every field. Missing fields default to ambiguity — and the controller will treat ambiguous scope as out-of-scope.
 
 ```text
 Objective: <one-line outcome you want when this brief is done>
@@ -19,13 +19,13 @@ Deadline:  <soft or hard time budget, optional>
 ## Why each field exists
 
 - **Objective** — kills "what is this?" round-trips. If you can't write it in one line, the task isn't ready.
-- **Scope** — the worker's hard fence. Out-of-scope changes should be rejected, not silently absorbed.
-- **Do not** — explicit guardrails for destructive actions (`rm -rf`, force-push, public posting, network egress). Always present, even if empty.
+- **Scope** — the worker's hard fence. The controller checks Scope on every `before_tool_call`; out-of-scope calls are blocked. Out-of-scope changes should be rejected, not silently absorbed.
+- **Do not** — explicit guardrails for destructive actions (`rm -rf`, force-push, public posting, network egress). Always present, even if empty. The controller will treat any unlisted destructive verb as a policy violation if it is not in Scope either.
 - **Context** — paste only what's needed. Don't forward the whole session transcript; the worker's context is precious too.
 - **Output** — commits the worker to producing evidence, not a vibe.
-- **Verify** — the smallest meaningful check. If a worker can't tell you how to verify, the brief is incomplete.
+- **Verify** — the smallest meaningful check. If a worker can't tell you how to verify, the brief is incomplete. The controller does not run Verify for you.
 - **Model** — make the delegation explicit so the worker doesn't re-delegate.
-- **Risk** — calibrates how aggressive the worker can be. High risk should mean narrower Scope, not skipped checks.
+- **Risk** — calibrates how aggressive the worker can be. High risk should mean narrower Scope, not skipped checks. The controller surfaces Risk in `/api/audit`.
 - **Deadline** — optional. Useful for "I'd rather have a partial right answer in 60s than a perfect one in 10 minutes".
 
 ## Filled example
@@ -43,7 +43,9 @@ Risk:      low — single-file refactor with test coverage.
 
 ## Anti-patterns
 
-- "Fix the bug." (no Scope, no Verify)
+- "Fix the bug." (no Scope, no Verify — the controller will block everything)
 - "Make it production-ready." (objective unbounded)
 - "Just do whatever you think." (delegation without accountability)
 - Pasting the entire main-session transcript into Context.
+- Forgetting Risk. The controller surfaces it in the audit stream, but a missing Risk is also a missing one-line reason for the blast radius.
+- Re-issuing the same call after a `block: true` decision from `/api/tool-check`. The controller will reject the substitution attempt at the route layer too.
