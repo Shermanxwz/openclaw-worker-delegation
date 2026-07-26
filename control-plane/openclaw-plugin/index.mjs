@@ -2,11 +2,6 @@ import crypto from 'node:crypto';
 import net from 'node:net';
 import { definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry';
 
-const SAFE_WHEN_OFFLINE = new Set([
-  'read', 'web_search', 'web_fetch', 'agents_list', 'sessions_list',
-  'sessions_spawn', 'sessions_yield', 'sessions_history', 'session_status', 'subagents',
-]);
-
 function list(value, fallback) {
   return Array.isArray(value) && value.length ? [...new Set(value.map(String).map((item) => item.trim()).filter(Boolean))] : fallback;
 }
@@ -128,7 +123,7 @@ export default definePluginEntry({
       } catch (error) {
         api.logger.error(`route check failed: ${error.message}`);
         if (config.failMode === 'closed') {
-          return { appendSystemContext: '[Delegation control unavailable]\nFail-closed mode is active. Do not attempt mutation or runtime tools. Only answer without tools or use a coordination tool.' };
+          return { appendSystemContext: '[Delegation control unavailable]\nFail-closed mode is active. Do not call any tool. Answer without tools or report that controller access must be restored.' };
         }
       }
     }, { priority: 90, timeoutMs: Math.min(15_000, config.requestTimeoutMs + 1500) });
@@ -150,7 +145,7 @@ export default definePluginEntry({
         if (!result.allowed) return { block: true, blockReason: `Delegation control blocked ${tool}: ${result.reason}` };
       } catch (error) {
         api.logger.error(`tool gate failed for ${tool}: ${error.message}`);
-        if (config.failMode === 'closed' && !SAFE_WHEN_OFFLINE.has(tool.toLowerCase())) {
+        if (config.failMode === 'closed') {
           return { block: true, blockReason: `Delegation control unavailable; fail-closed blocked ${tool}` };
         }
       }

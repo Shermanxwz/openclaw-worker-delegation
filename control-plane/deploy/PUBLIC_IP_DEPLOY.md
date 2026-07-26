@@ -69,4 +69,5 @@ Open only TCP 80/443 and the chosen SSH port. Do not expose 8787 or any OpenClaw
 3. Confirm the panel changes from `ADVISORY` to `HARD`.
 4. Switch to Worker mode and verify main `read`, `web_search`, `exec`, `write`, `edit`, and `apply_patch` calls are blocked while `sessions_spawn` remains allowed.
 5. Switch to Main for 15 minutes and verify workers are frozen immediately.
-6. Wait for expiry and confirm the effective mode returns to the configured default.
+6. Arm “下一次任务” for a real session, confirm exactly one route uses it, and confirm the following route falls back.
+7. Wait for Main expiry and confirm the effective mode returns to the configured default.

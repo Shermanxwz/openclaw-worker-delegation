@@ -96,3 +96,37 @@ test('main-only mode immediately freezes worker tool calls', async (t) => {
   const check = await fetch(`${base}/api/tool-check`, { method: 'POST', headers: agentHeaders(token), body: JSON.stringify({ agentId: 'body-worker', tool: 'exec' }) });
   assert.equal((await check.json()).allowed, false);
 });
+
+test('Web next-task override is consumed by one real main route only', async (t) => {
+  const { app, base, password, token } = await startApp();
+  t.after(() => app.close());
+  const auth = await login(base, password);
+  const browser = browserHeaders(auth);
+  const set = await fetch(`${base}/api/mode`, {
+    method: 'PUT',
+    headers: browser,
+    body: JSON.stringify({ scope: 'task', id: 's-next', mode: 'worker', ttlMinutes: 30 }),
+  });
+  assert.equal(set.status, 200);
+
+  const headers = agentHeaders(token);
+  const first = await (await fetch(`${base}/api/route`, {
+    method: 'POST', headers,
+    body: JSON.stringify({ hook: 'before_prompt_build', instanceId: 'i-next', agentId: 'main', runId: 'run-next-1', sessionId: 's-next', task: '解释架构' }),
+  })).json();
+  assert.equal(first.route.mode, 'worker');
+  assert.equal(first.modeSource, 'task');
+
+  const repeated = await (await fetch(`${base}/api/route`, {
+    method: 'POST', headers,
+    body: JSON.stringify({ hook: 'before_prompt_build', instanceId: 'i-next', agentId: 'main', runId: 'run-next-1', sessionId: 's-next', task: 'same run' }),
+  })).json();
+  assert.equal(repeated.route.mode, 'worker');
+  assert.equal(repeated.modeSource, 'task');
+
+  const second = await (await fetch(`${base}/api/route`, {
+    method: 'POST', headers,
+    body: JSON.stringify({ hook: 'before_prompt_build', instanceId: 'i-next', agentId: 'main', runId: 'run-next-2', sessionId: 's-next', task: '为什么使用 worker？' }),
+  })).json();
+  assert.equal(second.route.mode, 'auto');
+});

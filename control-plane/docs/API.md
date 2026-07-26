@@ -50,11 +50,11 @@ For `mode: "main"`, also send:
 }
 ```
 
-Only Main mode is time-bounded by the UI/API. Worker and Auto persist until changed or their session/project override is cleared.
+Persistent Main mode is time-bounded by the UI/API. Worker and Auto persist until changed. With `scope: "task"`, `id` is a session ID and the override is consumed by exactly one real Main route; every task override expires if unused.
 
 ### `DELETE /api/mode`
 
-Clears a session or project override.
+Clears a task, session, or project override.
 
 ### `POST /api/route-preview`
 
@@ -86,7 +86,7 @@ Called by the native `before_prompt_build` hook.
 }
 ```
 
-The controller derives the role from `agentId`, resolves the current mode, returns the authoritative route/policy, and binds the decision to the run/agent/session where identifiers are present. Agent callers cannot elevate to Main with `taskMode`.
+The controller derives the role from `agentId`, atomically consumes any pending one-shot override for that session, resolves the current mode, returns the authoritative route/policy, and binds the decision to the run/agent/session where identifiers are present. Agent callers cannot elevate to Main with `taskMode`.
 
 ### `POST /api/tool-check`
 

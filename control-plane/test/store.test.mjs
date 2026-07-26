@@ -78,3 +78,27 @@ test('malformed trailing audit event does not prevent restart', async () => {
   await restarted.init();
   assert.equal(restarted.listEvents()[0].type, 'ok');
 });
+
+test('next-task override is highest priority and consumed exactly once', async () => {
+  const { store } = await tempStore();
+  await store.setMode({ scope: 'global', mode: 'auto' });
+  await store.setMode({ scope: 'session', id: 's1', mode: 'worker' });
+  await store.setMode({ scope: 'task', id: 's1', mode: 'main', ttlMinutes: 30 });
+  assert.equal(store.resolveMode({ sessionId: 's1' }).source, 'task');
+  const first = await store.consumeMode({ sessionId: 's1' });
+  assert.equal(first.mode, 'main');
+  assert.equal(first.source, 'task');
+  const second = await store.consumeMode({ sessionId: 's1' });
+  assert.equal(second.mode, 'worker');
+  assert.equal(second.source, 'session');
+});
+
+test('expired next-task override is never consumed', async () => {
+  let now = 1_700_000_000_000;
+  const { store } = await tempStore({ now: () => now });
+  await store.setMode({ scope: 'task', id: 's1', mode: 'main', ttlMinutes: 5 });
+  now += 6 * 60_000;
+  const resolved = await store.consumeMode({ sessionId: 's1' });
+  assert.equal(resolved.mode, 'auto');
+  assert.notEqual(resolved.source, 'task');
+});

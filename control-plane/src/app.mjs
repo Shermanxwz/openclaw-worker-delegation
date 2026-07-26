@@ -213,12 +213,18 @@ export async function createControlPlane(config) {
         if (mode === 'main') {
           if (body.confirmation !== 'ENABLE_MAIN') return json(res, 400, { error: 'main_confirmation_required' });
           if (!(await verifyControlCredential(body.reauthPassword || '', body.reauthTotp || ''))) return json(res, 403, { error: 'reauthentication_required' });
-          ttlMinutes = Math.min(ttlMinutes || config.mainModeDefaultTtlMinutes, config.mainModeMaxTtlMinutes);
+          const defaultTtl = scope === 'task' ? config.taskOverrideDefaultTtlMinutes : config.mainModeDefaultTtlMinutes;
+          const maxTtl = scope === 'task'
+            ? Math.min(config.taskOverrideMaxTtlMinutes, config.mainModeMaxTtlMinutes)
+            : config.mainModeMaxTtlMinutes;
+          ttlMinutes = Math.min(ttlMinutes || defaultTtl, maxTtl);
+        } else if (scope === 'task') {
+          ttlMinutes = Math.min(ttlMinutes || config.taskOverrideDefaultTtlMinutes, config.taskOverrideMaxTtlMinutes);
         } else {
           ttlMinutes = 0;
         }
         const entry = await store.setMode({ scope, id, mode, ttlMinutes, actor: 'web' });
-        return json(res, 200, { ok: true, entry, resolved: store.resolveMode({ sessionId: scope === 'session' ? id : '', projectId: scope === 'project' ? id : '' }) });
+        return json(res, 200, { ok: true, entry, resolved: store.resolveMode({ sessionId: scope === 'session' || scope === 'task' ? id : '', projectId: scope === 'project' ? id : '' }) });
       }
       if (pathname === '/api/mode' && req.method === 'DELETE') {
         if (!requireBrowserAuth(req, res, { csrf: true })) return;
@@ -243,10 +249,24 @@ export async function createControlPlane(config) {
         const runId = validateIdentifier(body.runId || '', 'run_id');
         const role = resolveAgentRole(agentId, config);
         if (role === 'unknown') return json(res, 403, { error: 'unknown_agent_id' });
-        const resolved = store.resolveMode({ sessionId: body.sessionId, projectId: body.projectId });
-        const route = role === 'main' ? routeTask({ task: body.task, mode: resolved.mode, properties: body.properties, workerAll: body.workerAll }) : { mode: resolved.mode, actor: role === 'worker' ? 'worker' : 'verifier', decision: 'role-bound', score: null, confidence: 1, properties: {}, reasons: [] };
-        if (body.hook === 'before_prompt_build') await store.markRouteObserved({ instanceId: body.instanceId, runId, agentId, route, sessionId: body.sessionId, projectId: body.projectId });
-        else if (runId) await store.markRouteObserved({ instanceId: '', runId, agentId, route, sessionId: body.sessionId, projectId: body.projectId });
+        const existingBinding = runId ? store.getRouteDecision(runId) : null;
+        let resolved;
+        let route;
+        if (existingBinding) {
+          const binding = store.validateRouteBinding(runId, agentId, body.sessionId || '');
+          if (!binding.valid) return json(res, 409, { error: binding.reason });
+          route = binding.decision.route;
+          resolved = { mode: route.mode, source: binding.decision.modeSource || 'run-binding' };
+        } else {
+          resolved = role === 'main'
+            ? await store.consumeMode({ sessionId: body.sessionId, projectId: body.projectId })
+            : store.resolveMode({ sessionId: body.sessionId, projectId: body.projectId, includeTask: false });
+          route = role === 'main'
+            ? routeTask({ task: body.task, mode: resolved.mode, properties: body.properties, workerAll: body.workerAll })
+            : { mode: resolved.mode, actor: role === 'worker' ? 'worker' : 'verifier', decision: 'role-bound', score: null, confidence: 1, properties: {}, reasons: [] };
+        }
+        if (body.hook === 'before_prompt_build') await store.markRouteObserved({ instanceId: body.instanceId, runId, agentId, route, modeSource: resolved.source, sessionId: body.sessionId, projectId: body.projectId });
+        else if (runId && !existingBinding) await store.markRouteObserved({ instanceId: '', runId, agentId, route, modeSource: resolved.source, sessionId: body.sessionId, projectId: body.projectId });
         const policy = buildPolicy({ mode: resolved.mode, role, routeActor: route.actor, workerExtraTools: config.workerExtraTools, verifierExtraTools: config.verifierExtraTools });
         const event = await store.appendEvent({ type: 'route.decided', ...redact(route), role, agentId, modeSource: resolved.source, sessionId: body.sessionId || null, projectId: body.projectId || null });
         return json(res, 200, { route, policy, role, modeSource: resolved.source, eventId: event.id });
@@ -262,7 +282,10 @@ export async function createControlPlane(config) {
         if (!binding.valid) return json(res, 409, { error: binding.reason });
         const effectiveSessionId = binding.decision?.sessionId || body.sessionId;
         const effectiveProjectId = binding.decision?.projectId || body.projectId;
-        const resolved = store.resolveMode({ sessionId: effectiveSessionId, projectId: effectiveProjectId });
+        const baseResolved = store.resolveMode({ sessionId: effectiveSessionId, projectId: effectiveProjectId, includeTask: false });
+        const resolved = binding.decision?.modeSource === 'task'
+          ? { mode: binding.decision.route.mode, source: 'task-run-binding' }
+          : baseResolved;
         const routeActor = binding.decision?.route?.actor || (resolved.mode === 'main' ? 'main' : role === 'main' ? 'worker' : role);
         const policy = buildPolicy({ mode: resolved.mode, role, routeActor, workerExtraTools: config.workerExtraTools, verifierExtraTools: config.verifierExtraTools });
         return json(res, 200, { mode: resolved.mode, modeSource: resolved.source, role, routeActor, policy });
@@ -282,7 +305,10 @@ export async function createControlPlane(config) {
         }
         const effectiveSessionId = binding.decision?.sessionId || body.sessionId;
         const effectiveProjectId = binding.decision?.projectId || body.projectId;
-        const resolved = store.resolveMode({ sessionId: effectiveSessionId, projectId: effectiveProjectId });
+        const baseResolved = store.resolveMode({ sessionId: effectiveSessionId, projectId: effectiveProjectId, includeTask: false });
+        const resolved = binding.decision?.modeSource === 'task'
+          ? { mode: binding.decision.route.mode, source: 'task-run-binding' }
+          : baseResolved;
         const routeActor = binding.decision?.route?.actor || (resolved.mode === 'main' ? 'main' : role === 'main' ? 'worker' : role);
         const policy = buildPolicy({ mode: resolved.mode, role, routeActor, workerExtraTools: config.workerExtraTools, verifierExtraTools: config.verifierExtraTools });
         const decision = toolDecision(policy, body.tool);

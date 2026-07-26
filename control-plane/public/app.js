@@ -22,7 +22,7 @@ function show(view) {
 function contextQuery() {
   const scope = $('#scope').value;
   const id = $('#scope-id').value.trim();
-  if (scope === 'session') return `?sessionId=${encodeURIComponent(id)}`;
+  if (scope === 'session' || scope === 'task') return `?sessionId=${encodeURIComponent(id)}`;
   if (scope === 'project') return `?projectId=${encodeURIComponent(id)}`;
   return '';
 }
@@ -90,7 +90,7 @@ async function refresh() {
   $('#resolved-mode').textContent = status.resolvedMode.mode.toUpperCase();
   $('#mode-source').textContent = `来源：${status.resolvedMode.source}${status.resolvedMode.entry?.expiresAt ? ` · 到期 ${new Date(status.resolvedMode.entry.expiresAt).toLocaleString()}` : ''}`;
   $$('.mode-button').forEach((button) => button.classList.toggle('active', button.dataset.mode === status.resolvedMode.mode));
-  $('#clear-override').disabled = !['session', 'project'].includes(status.resolvedMode.source);
+  $('#clear-override').disabled = !['task', 'session', 'project'].includes(status.resolvedMode.source);
   renderRuntime(status.runtimeStatus); renderMetrics(status.metrics);
   $('#latest-route').textContent = renderRoute(status.latestRoute); renderEvents(eventData.events);
 }
@@ -121,7 +121,7 @@ $('#scope').addEventListener('change', () => { $('#scope-id-label').classList.to
 $('#scope-id').addEventListener('change', () => refresh().catch(() => {}));
 $('#refresh').addEventListener('click', () => refresh().catch((error) => { $('#connection').textContent = `刷新失败：${error.message}`; }));
 $('#use-runtime-session').addEventListener('click', () => { if (state.runtimeSessionId) { $('#scope').value = 'session'; $('#scope-id-label').classList.remove('hidden'); $('#scope-id').value = state.runtimeSessionId; refresh().catch(() => {}); } else $('#mode-message').textContent = '运行时尚未上报会话 ID。'; });
-$('#clear-override').addEventListener('click', async () => { const scope = $('#scope').value; const id = $('#scope-id').value.trim(); if (!['session', 'project'].includes(scope) || !id) return; try { await api('/api/mode', { method: 'DELETE', body: JSON.stringify({ scope, id }) }); $('#mode-message').textContent = '已清除覆盖。'; await refresh(); } catch (error) { $('#mode-message').textContent = `清除失败：${error.message}`; } });
+$('#clear-override').addEventListener('click', async () => { const scope = $('#scope').value; const id = $('#scope-id').value.trim(); if (!['task', 'session', 'project'].includes(scope) || !id) return; try { await api('/api/mode', { method: 'DELETE', body: JSON.stringify({ scope, id }) }); $('#mode-message').textContent = '已清除覆盖。'; await refresh(); } catch (error) { $('#mode-message').textContent = `清除失败：${error.message}`; } });
 
 $$('.mode-button').forEach((button) => button.addEventListener('click', async () => {
   $('#mode-message').textContent = '';
@@ -139,7 +139,7 @@ $('#main-form').addEventListener('submit', async (event) => {
 $('#route-form').addEventListener('submit', async (event) => {
   event.preventDefault(); const task = $('#route-task').value.trim(); if (!task) return;
   const scope = $('#scope').value; const id = $('#scope-id').value.trim(); const body = { task };
-  if (scope === 'session') body.sessionId = id; if (scope === 'project') body.projectId = id;
+  if (scope === 'session' || scope === 'task') body.sessionId = id; if (scope === 'project') body.projectId = id;
   try { const result = await api('/api/route-preview', { method: 'POST', body: JSON.stringify(body) }); $('#route-result').textContent = `${renderRoute(result.route)}\n\nPolicy:\n${JSON.stringify(result.policy, null, 2)}`; }
   catch (error) { $('#route-result').textContent = `预览失败：${error.message}`; }
 });

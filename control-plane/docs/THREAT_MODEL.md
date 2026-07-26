@@ -28,7 +28,7 @@ The control plane prevents an OpenClaw model from silently crossing the selected
 4. Worker mode gives main coordination tools only. Main cannot read files, browse, mutate, or execute body-work tools.
 5. Auto mode makes the router authoritative: a main-routed light task cannot spawn a worker; a worker-routed task cannot be duplicated by main.
 6. Main mode freezes already-running worker and verifier tool calls, not just future spawns.
-7. Main elevation requires explicit confirmation, password re-authentication, optional TOTP, and a bounded expiry.
+7. Main elevation requires explicit confirmation, password re-authentication, optional TOTP, and a bounded expiry. A next-task override is stored server-side, consumed once for the named session, and cannot be asserted by an agent request body.
 8. `HARD` requires a fresh heartbeat plus actual route and tool-hook observations from the same plugin instance. A controller restart clears old observations.
 9. State writes are atomic and serialized; the audit file is bounded and compacted.
 10. Public reverse-proxy examples hide agent-only endpoints and expose only the authenticated browser surface.
@@ -57,7 +57,7 @@ Delegation does not make Worker output correct. Verification, sandboxing, scoped
 
 ### Availability
 
-The plugin defaults to fail-closed for mutation/runtime tools when the controller is unreachable. This protects integrity at the cost of availability. `failMode: "open"` is supported only for operators who deliberately accept that tradeoff.
+The plugin defaults to fully fail-closed when the controller is unreachable: all tool calls are blocked because the current mode cannot be proven. This protects integrity at the cost of availability. `failMode: "open"` is supported only for operators who deliberately accept that tradeoff.
 
 ## Recommended production posture
 

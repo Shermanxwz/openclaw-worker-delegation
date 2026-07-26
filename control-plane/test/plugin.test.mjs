@@ -12,4 +12,6 @@ test('native plugin package and manifest agree', async () => {
   assert.match(source, /before_tool_call/);
   assert.match(source, /block: true/);
   assert.doesNotMatch(source, /startup-probe/);
+  assert.doesNotMatch(source, /SAFE_WHEN_OFFLINE/);
+  assert.match(source, /fail-closed blocked/);
 });

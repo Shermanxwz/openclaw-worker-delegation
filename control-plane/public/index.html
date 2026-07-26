@@ -36,9 +36,9 @@
         <div class="section-heading">
           <div><p class="eyebrow">ACTIVE MODE</p><h2 id="resolved-mode">AUTO</h2><p id="mode-source" class="muted">来源：global</p></div>
           <div class="scope-fields">
-            <label>作用域<select id="scope"><option value="session">当前会话</option><option value="project">当前项目</option><option value="global">全局默认</option></select></label>
-            <label id="scope-id-label">标识<input id="scope-id" value="default-session" maxlength="200" placeholder="session/project id"></label>
-            <label>MAIN 有效时间<select id="ttl"><option value="15">15 分钟</option><option value="30" selected>30 分钟</option><option value="60">60 分钟</option><option value="120">120 分钟</option></select></label>
+            <label>作用域<select id="scope"><option value="task">下一次任务</option><option value="session" selected>当前会话</option><option value="project">当前项目</option><option value="global">全局默认</option></select></label>
+            <label id="scope-id-label">会话/项目标识<input id="scope-id" value="default-session" maxlength="200" placeholder="session/project id"></label>
+            <label>MAIN/下一任务有效时间<select id="ttl"><option value="15">15 分钟</option><option value="30" selected>30 分钟</option><option value="60">60 分钟</option><option value="120">120 分钟</option></select></label>
           </div>
         </div>
         <div class="mode-grid">
@@ -46,6 +46,7 @@
           <button class="mode-button auto" data-mode="auto"><strong>自动判断</strong><span>工具型工作默认交给 Worker</span></button>
           <button class="mode-button main" data-mode="main"><strong>仅主控</strong><span>临时开放执行权限，自动到期</span></button>
         </div>
+        <p class="muted scope-note">“下一次任务”在该会话的下一次真实路由时消费一次；未消费时会按上方有效时间自动过期。</p>
         <div class="inline-actions"><button id="clear-override" class="ghost">清除当前覆盖</button><button id="use-runtime-session" class="ghost">使用运行时会话 ID</button></div>
         <p id="mode-message" class="muted" aria-live="polite"></p>
       </section>

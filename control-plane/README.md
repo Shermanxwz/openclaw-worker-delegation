@@ -39,7 +39,7 @@ openclaw plugins inspect delegation-guard --runtime --json
 Use `deploy/openclaw.example.json5` as a merge guide. The plugin defaults to:
 
 - loopback controller URL;
-- fail-closed behavior;
+- fully fail-closed behavior: no tool is allowed while the controller is unreachable;
 - 2.5-second controller request timeout;
 - 30-second runtime/model heartbeat;
 - explicit Main/Worker/Verifier agent-ID maps.
@@ -72,7 +72,11 @@ The deterministic router scores task properties. If it chooses Main, Main may pe
 
 Main may use its statically available tools except `sessions_spawn`. Existing Workers and Verifiers are immediately frozen by an empty dynamic policy. Web elevation requires explicit confirmation, password, optional TOTP, and expiry.
 
-Only Main mode is automatically time-bounded. Worker and Auto persist until changed or an override is cleared.
+Only persistent Main mode is automatically time-bounded. Worker and Auto persist until changed. A “next task” override is always one-shot and expires if it is not consumed.
+
+## One-shot next-task override
+
+Choose “下一次任务” in the Web panel and enter the actual runtime session ID. The controller stores the mode with a short expiry, consumes it on the next authoritative Main route for that session, binds it to that run, and then falls back to the session/project/global mode. Agent request bodies cannot invent or elevate a one-shot override.
 
 ## Model reporting
 

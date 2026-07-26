@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 const validModes = new Set(['worker', 'auto', 'main']);
-const validScopes = new Set(['global', 'project', 'session']);
+const validScopes = new Set(['global', 'project', 'session', 'task']);
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const cleanText = (value, max = 200) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null;
 const isExpired = (entry, now) => Boolean(entry?.expiresAt && Date.parse(entry.expiresAt) <= now);
@@ -38,10 +38,11 @@ export class StateStore {
     this.eventWritesSinceCompact = 0;
     this.routeDecisions = new Map();
     this.state = {
-      version: 3,
+      version: 4,
       global: { mode: defaultMode, updatedAt: new Date(now()).toISOString(), actor: 'bootstrap' },
       projects: {},
       sessions: {},
+      tasks: {},
       runtime: emptyRuntimeStatus(),
     };
     this.events = [];
@@ -62,6 +63,7 @@ export class StateStore {
         ...loaded,
         projects: loaded.projects || {},
         sessions: loaded.sessions || {},
+        tasks: loaded.tasks || {},
         runtime: {
           ...emptyRuntimeStatus(),
           ...(loaded.runtime || {}),
@@ -113,7 +115,7 @@ export class StateStore {
   async purgeExpired() {
     const now = this.now();
     let changed = false;
-    for (const collection of [this.state.projects, this.state.sessions]) {
+    for (const collection of [this.state.projects, this.state.sessions, this.state.tasks]) {
       for (const [id, entry] of Object.entries(collection)) {
         if (isExpired(entry, now)) { delete collection[id]; changed = true; }
       }
@@ -125,9 +127,11 @@ export class StateStore {
     if (changed) await this.persistState();
   }
 
-  resolveMode({ sessionId = '', projectId = '', taskMode = '' } = {}) {
+  resolveMode({ sessionId = '', projectId = '', taskMode = '', includeTask = true } = {}) {
     const now = this.now();
-    if (validModes.has(taskMode)) return { mode: taskMode, source: 'task', entry: { mode: taskMode } };
+    if (validModes.has(taskMode)) return { mode: taskMode, source: 'task-preview', entry: { mode: taskMode } };
+    const task = includeTask && sessionId ? this.state.tasks[sessionId] : null;
+    if (task && !isExpired(task, now)) return { mode: task.mode, source: 'task', entry: clone(task) };
     const session = sessionId ? this.state.sessions[sessionId] : null;
     if (session && !isExpired(session, now)) return { mode: session.mode, source: 'session', entry: clone(session) };
     const project = projectId ? this.state.projects[projectId] : null;
@@ -135,6 +139,15 @@ export class StateStore {
     const global = this.state.global;
     if (global && !isExpired(global, now)) return { mode: global.mode || this.defaultMode, source: 'global', entry: clone(global) };
     return { mode: this.defaultMode, source: global ? 'default-after-expiry' : 'default', entry: { mode: this.defaultMode } };
+  }
+
+  async consumeMode({ sessionId = '', projectId = '' } = {}) {
+    const resolved = this.resolveMode({ sessionId, projectId });
+    if (resolved.source !== 'task') return resolved;
+    delete this.state.tasks[sessionId];
+    await this.persistState();
+    await this.appendEvent({ type: 'mode.consumed', scope: 'task', scopeId: sessionId, mode: resolved.mode, actor: 'runtime' });
+    return resolved;
   }
 
   async setMode({ scope, id = '', mode, ttlMinutes = 0, actor = 'user' }) {
@@ -146,15 +159,17 @@ export class StateStore {
     if (scope === 'global') this.state.global = entry;
     if (scope === 'project') this.state.projects[id] = entry;
     if (scope === 'session') this.state.sessions[id] = entry;
+    if (scope === 'task') this.state.tasks[id] = entry;
     await this.persistState();
     await this.appendEvent({ type: 'mode.changed', scope, scopeId: id || null, mode, actor, expiresAt: entry.expiresAt || null });
     return clone(entry);
   }
 
   async clearMode({ scope, id = '', actor = 'user' }) {
-    if (!['project', 'session'].includes(scope) || !id) throw Object.assign(new Error('Only project/session overrides can be cleared'), { statusCode: 400 });
+    if (!['project', 'session', 'task'].includes(scope) || !id) throw Object.assign(new Error('Only task/project/session overrides can be cleared'), { statusCode: 400 });
     if (scope === 'project') delete this.state.projects[id];
-    else delete this.state.sessions[id];
+    if (scope === 'session') delete this.state.sessions[id];
+    if (scope === 'task') delete this.state.tasks[id];
     await this.persistState();
     await this.appendEvent({ type: 'mode.cleared', scope, scopeId: id, actor });
   }
@@ -190,13 +205,13 @@ export class StateStore {
     return clone(this.state.runtime);
   }
 
-  async markRouteObserved({ instanceId = '', runId = '', agentId = '', route = null, sessionId = '', projectId = '' } = {}) {
+  async markRouteObserved({ instanceId = '', runId = '', agentId = '', route = null, modeSource = '', sessionId = '', projectId = '' } = {}) {
     const at = new Date(this.now()).toISOString();
     if (instanceId && instanceId === this.state.runtime.instanceId) {
       this.state.runtime.observedEnforcement = { ...this.state.runtime.observedEnforcement, routeAt: at, instanceId };
       await this.persistState();
     }
-    if (runId && route) this.routeDecisions.set(runId, { route: clone(route), agentId, sessionId, projectId, createdAt: this.now(), instanceId });
+    if (runId && route) this.routeDecisions.set(runId, { route: clone(route), modeSource, agentId, sessionId, projectId, createdAt: this.now(), instanceId });
     this.cleanupRouteDecisions();
   }
 
@@ -256,6 +271,7 @@ export class StateStore {
       resolvedMode: resolved,
       globalMode: clone(this.state.global),
       projectMode: projectId ? clone(this.state.projects[projectId] || null) : null,
+      taskMode: sessionId ? clone(this.state.tasks[sessionId] || null) : null,
       sessionMode: sessionId ? clone(this.state.sessions[sessionId] || null) : null,
       runtimeStatus: { ...clone(this.state.runtime || emptyRuntimeStatus()), enforcement: this.enforcementSnapshot() },
       metrics: {

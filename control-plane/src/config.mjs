@@ -49,6 +49,8 @@ export function loadConfig(env = process.env) {
     defaultMode,
     mainModeDefaultTtlMinutes: asInt(env.MAIN_MODE_DEFAULT_TTL_MINUTES, 30, 5, 240),
     mainModeMaxTtlMinutes: asInt(env.MAIN_MODE_MAX_TTL_MINUTES, 120, 5, 1440),
+    taskOverrideDefaultTtlMinutes: asInt(env.TASK_OVERRIDE_DEFAULT_TTL_MINUTES, 30, 5, 240),
+    taskOverrideMaxTtlMinutes: asInt(env.TASK_OVERRIDE_MAX_TTL_MINUTES, 120, 5, 1440),
     maxEvents: asInt(env.MAX_EVENTS, 2000, 100, 100_000),
     maxSseClients: asInt(env.MAX_SSE_CLIENTS, 8, 1, 100),
     runtimeStaleSeconds: asInt(env.RUNTIME_STALE_SECONDS, 90, 15, 3600),
@@ -93,6 +95,9 @@ export function validateConfig(config) {
   }
   if (config.mainModeDefaultTtlMinutes > config.mainModeMaxTtlMinutes) {
     errors.push('MAIN_MODE_DEFAULT_TTL_MINUTES cannot exceed MAIN_MODE_MAX_TTL_MINUTES');
+  }
+  if (config.taskOverrideDefaultTtlMinutes > config.taskOverrideMaxTtlMinutes) {
+    errors.push('TASK_OVERRIDE_DEFAULT_TTL_MINUTES cannot exceed TASK_OVERRIDE_MAX_TTL_MINUTES');
   }
   const roleEntries = [
     ...config.mainAgentIds.map((id) => [id, 'main']),
