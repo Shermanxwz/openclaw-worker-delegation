@@ -9,8 +9,8 @@
   },
   "scripts": {
     "start": "node src/server.mjs",
-    "test": "node --test",
-    "check": "node --check src/*.mjs && node --check integration/*.mjs && node --check openclaw-plugin/*.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check src/*.mjs && node --check integration/*.mjs && node --check openclaw-plugin/*.mjs && node --check test/openclaw/*.mjs && bash -n test/openclaw/*.sh",
     "hash-password": "node src/cli.mjs hash-password",
     "generate-token": "node src/cli.mjs generate-token",
     "doctor": "node src/cli.mjs doctor",
