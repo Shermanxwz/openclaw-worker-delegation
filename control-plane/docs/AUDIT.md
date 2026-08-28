@@ -1,68 +1,101 @@
-# Production hardening audit
+# Production hardening audit — v0.3
 
-This document records the review performed for the v0.2 control-plane branch. “Perfect” is not a defensible software claim; the target is a small, auditable system with explicit boundaries, regression tests, fail-closed defaults, and evidence from the real OpenClaw runtime.
+This document records the engineering/security closure criteria for the sealed v0.3 mainline. “Perfect” is not a defensible software property; the release criterion is explicit authority boundaries, fail-closed defaults, durable ownership, regression tests and acceptance against a real OpenClaw Gateway.
 
-## Critical findings fixed
+## P0/P1 findings closed
 
-- Caller-controlled `role`/`actor` could select a wider policy. Role is now derived from configured host agent IDs.
-- A shared run ID could be reused with another agent/session. Route decisions are now bound and mismatches deny.
-- A startup self-probe could make the panel claim `HARD` without a real hook invocation. Startup probes were removed; real hook traffic is required.
-- Main-only mode stopped future spawns but did not freeze existing Workers. Non-main roles now receive an empty policy immediately in Main mode.
-- Worker mode still let Main read files and browse, enabling duplicate body-work. Main is now coordination-only when delegated.
-- Auto-routed lightweight Main tasks could still spawn Workers. The route is now authoritative.
-- Worker/Auto persistent switches accidentally inherited the Main TTL. Persistent Worker/Auto no longer expire; the explicit next-task scope is one-shot and separately time-bounded.
-- Expiring global Main state did not return to the default. Global expiry is now handled and periodically purged.
-- Real `model_call_started`/`model_call_ended` hooks do not guarantee `ctx.agentId`; the host identity can be carried by `event.sessionKey`. Runtime model reporting now derives the Agent ID from the documented `agent:<id>:...` session identity when needed.
+- **Role spoofing** — role/actor claims from request bodies no longer select policy; roles derive from configured OpenClaw agent IDs.
+- **Missing route fail-open** — tool authority now requires an authoritative persistent run binding. Missing run/binding fails closed.
+- **Run/session substitution** — route bindings reject agent/session mismatches.
+- **Ephemeral route ownership** — real route decisions persist in controller state and survive controller restart within bounded TTL; runtime hook proof itself intentionally does not survive restart.
+- **Worker as a black box** — Worker/Verifier execution now receives persistent `wrk_...` task identity with parent/execution provenance, model route, owner epoch, heartbeat, progress, lease, review and terminal event timeline.
+- **Stale Worker authority** — Worker/Verifier tools require fresh heartbeat plus live lease/grace, matching owner epoch and execution identity, and an unexpired hard deadline.
+- **Heartbeat extending forever** — ordinary heartbeat does not renew normal lease duration. Only meaningful progress renews, clamped to hard deadline.
+- **Unlimited task duration** — quick tasks are hard-clamped to 600 seconds; standard tasks to 3600 seconds even when StateStore is constructed directly.
+- **Cancellation/fencing race** — cancellation and MAIN fencing increment owner epoch, invalidating stale Worker ownership immediately.
+- **Over-broad MAIN fence** — project/session MAIN fences only matching delegated work; one-shot MAIN does not tear down unrelated running tasks.
+- **WORKER still doing work on Main** — substantive WORKER tasks always delegate; Main remains autonomous coordinator/reviewer, with only control/status exceptions.
+- **AUTO ambiguity granting Main authority** — ambiguous/tool/heavy work delegates conservatively.
+- **Display-only model routing** — routing profiles are consumed by the native plugin at model resolution and native `sessions_spawn` rewriting.
+- **Synthetic reasoning tiers** — model thinking levels come only from OpenClaw upstream policy; models with no declared levels expose only `Auto`.
+- **Spawn provenance loss** — durable task marker + child run/session binding connects native OpenClaw subagent execution back to the controller task.
+- **Long child run heartbeat gaps** — periodic plugin heartbeat covers both run-bound and session-only child task identities.
+- **Inconsistent hook run IDs** — host run ID is pinned to session identity so later hooks that omit run ID reuse the authoritative binding.
+- **Pending spawn correlation** — spawn prepare/completion uses a consistent toolCallId-or-parent-run fallback key.
+- **False HARD badge** — startup self-report is insufficient; HARD requires fresh same-instance runtime plus actual route and tool observations.
+- **Controller outage ambiguity** — recommended plugin posture is fully fail-closed; controller loss blocks subsequent tools.
 
-## Security and reliability findings fixed
+## Web/product closure
 
-- Added an actual native OpenClaw plugin using `before_prompt_build` and terminal `before_tool_call` blocking.
-- Added fully fail-closed behavior and loopback controller validation in the plugin; controller loss blocks every tool rather than guessing which tools are safe.
-- Added optional TOTP for login and Main elevation.
-- Upgraded password hashing while retaining legacy hash verification.
-- Bounded concurrent expensive password checks.
-- Bounded sessions, login limiter state, SSE clients, event memory, and audit-log disk size.
-- Serialized and atomically replaced state files.
-- Tolerated and compacted a malformed trailing audit-log line after an unclean shutdown.
-- Cleared hook observations after controller restart to prevent stale `HARD` status.
-- Split browser route preview from real runtime routing metrics. Added a server-owned, expiring one-shot next-task override that is consumed once and bound to the resulting run.
-- Removed anonymous mode leakage from health endpoints.
-- Added strict request sizes, content types, identifiers, security headers, request IDs, graceful shutdown, and production config validation.
-- Hardened systemd and reverse-proxy examples; agent-only APIs are excluded from the public proxy.
-- Changed Verifier to genuinely read-only by default.
+The root dashboard is intentionally reduced to the operator's primary decisions: mode/scope and model routing for the active mode. Operational detail is separated into Tasks, Runtime, Audit and Settings pages. Root-control task cancel/extend is explicitly secondary and requires confirmation plus credential re-authentication.
 
-## Automated test coverage
+The Web panel writes authoritative controller routing profiles; it does not maintain an independent provider/model catalog.
 
-The Node suite covers routing in Chinese and English, mode semantics, one-shot task consumption, role derivation, spoof attempts, route binding, Main elevation, optional TOTP, password hashing, global expiry, controller restart proof reset, concurrent state writes, audit recovery, native plugin package consistency, real Hook session identity normalization, and browser/agent API integration.
+## Durable task invariants
 
-## Official OpenClaw runtime acceptance
+A non-terminal Worker/Verifier tool call is authorized only if all of the following are true:
 
-GitHub Actions installs Node.js `24.15.0` and the pinned official npm package `openclaw@2026.7.1-2`, then starts a real Gateway and installs the linked `delegation-guard` plugin through the official CLI.
+1. authoritative run binding exists;
+2. configured role matches the runtime agent;
+3. durable `wrk_...` task exists;
+4. owner epoch matches;
+5. agent/run/session ownership matches when known;
+6. hard deadline is in the future;
+7. heartbeat is fresh;
+8. lease/grace authority is live;
+9. mode/role tool policy permits the requested tool.
 
-The real-runtime E2E has passed all of these assertions:
+Failure of any invariant is a denial.
 
-- plugin installation, enabling, configuration validation, and `plugins inspect --runtime --json`;
-- nine registered plugin hooks, including `before_prompt_build`, `before_tool_call`, model, subagent, and Gateway lifecycle hooks;
-- Auto mode blocking a real Main `exec` tool call;
-- Worker mode allowing a real Main `sessions_spawn`, a real body-worker model turn, and a real Worker `exec`;
-- Main mode allowing a real Main `exec`;
-- a Worker that had already started model generation being blocked before its delayed `exec` after switching to Main;
-- one-shot Main mode applying to exactly one real run and falling back on the next run;
-- actual Main and Worker model/provider reporting;
-- `HARD` proof from fresh heartbeat plus observed route and tool hooks;
-- complete fail-closed behavior after the Controller process is stopped.
+## Cancellation boundary
 
-The E2E uses a deterministic local OpenAI-compatible endpoint so no third-party model key or probabilistic model behavior can hide a control-plane regression. The Gateway, plugin loader, agent and subagent loops, hook runner, and tools are the real OpenClaw implementation.
+Controller cancellation/fencing guarantees immediate revocation of future plugin-governed tool authority and native spawn is bounded by OpenClaw `runTimeoutSeconds`. It does not claim OS-level instant destruction of an already-executing model/thread. That residual boundary is documented in `THREAT_MODEL.md` rather than hidden behind an inaccurate “kill” claim.
 
-## Remaining target-VPS acceptance work
+## Automated coverage
 
-Repository and real-Gateway runtime behavior are validated. The remaining checks are specific to the operator's actual VPS and cannot be proven by a hosted CI runner:
+The controller suite covers:
 
-- trusted public HTTPS certificate and phone login through the selected VPS address;
-- the production model/provider credentials and fallback chain;
-- systemd, Nginx/Caddy, firewall, state-directory permissions, and restart behavior on that host;
-- real Worker sandbox isolation from Gateway credentials and host-sensitive paths;
-- operator-selected exec approvals/allowlists and filesystem/network boundaries;
-- load, disk retention, and recovery behavior under the VPS's actual resource limits.
+- bilingual routing and literal WORKER semantics;
+- conservative AUTO behavior and risk-signal monotonicity;
+- mode precedence/expiry/persistent MAIN/one-shot consumption;
+- role spoofing and route binding substitution;
+- durable route restart recovery and missing-binding fail-closed behavior;
+- hard 10/60 minute task ceilings;
+- heartbeat freshness versus meaningful-progress lease renewal;
+- scoped MAIN fencing and one-shot no-fence semantics;
+- owner-epoch cancellation revocation;
+- Registry routing and upstream thinking declaration behavior;
+- complete HTTP Main-route → prepare → Worker-route → tool-gate → terminal lifecycle;
+- root-control credential re-authentication;
+- password/TOTP/session/CSRF/static-file hardening;
+- atomic state writes, malformed audit recovery and runtime proof reset;
+- plugin package/identity normalization.
 
-See `THREAT_MODEL.md` and `deploy/PUBLIC_IP_DEPLOY.md`.
+## Official OpenClaw acceptance gate
+
+The release workflow pins official OpenClaw `2026.7.1-2` with Node 24 and runs the checked-in real-Gateway harness. The merge gate requires:
+
+- official plugin install/enable/config validation/runtime inspect;
+- critical route/tool hooks registered in the real Gateway;
+- AUTO blocking real Main execution;
+- WORKER allowing a real native `sessions_spawn`, body-worker model turn and Worker tool execution;
+- MAIN allowing Main execution while fencing delegated Worker authority;
+- one-shot MAIN consumed exactly once;
+- actual Main/Worker provider-model reporting;
+- same-instance HARD proof only after real runtime hooks;
+- controller-loss fail-closed behavior.
+
+Controller CI also requires Node 20 and Node 22 syntax/unit/HTTP tests, plugin package validation, deploy/config validation and secret scanning. Plugin smoke uses the pinned official OpenClaw package.
+
+## Deployment-specific acceptance
+
+Hosted CI cannot prove the operator's production host. Before exposing a deployment, validate:
+
+- trusted public HTTPS and browser login on the real address;
+- production provider credentials and desired models as visible to OpenClaw Registry;
+- systemd/reverse-proxy/firewall/state-directory permissions and restart behavior;
+- Worker sandbox isolation from Gateway credentials and host-sensitive paths;
+- operator-selected exec approvals/allowlists/filesystem/network boundaries;
+- load, disk retention and recovery under actual host resources.
+
+See `THREAT_MODEL.md`, `API.md`, and `deploy/PUBLIC_IP_DEPLOY.md`.
