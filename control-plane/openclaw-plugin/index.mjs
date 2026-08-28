@@ -127,7 +127,12 @@ export default definePluginEntry({
       const key = sessionKey(event, ctx);
       if (key && runAliasBySession.has(key)) return runAliasBySession.get(key);
       const hostRun = firstString(ctx.runId, event.runId);
-      if (hostRun) return hostRun;
+      if (hostRun) {
+        // Pin the host run to the session so later hooks that omit runId still
+        // address the same durable route binding.
+        if (key) runAliasBySession.set(key, hostRun);
+        return hostRun;
+      }
       const alias = `ocwd_${crypto.randomUUID().replaceAll('-', '')}`;
       if (key) runAliasBySession.set(key, alias);
       return alias;
@@ -302,8 +307,6 @@ export default definePluginEntry({
         };
       } catch (error) {
         api.logger.error(`route/model resolution failed: ${error.message}`);
-        // before_model_resolve cannot block. before_agent_run and the tool gate
-        // provide the actual fail-closed boundary for this turn.
       }
     }, { priority: 100, timeoutMs: Math.min(15_000, config.requestTimeoutMs + 1500) });
 
@@ -329,9 +332,7 @@ export default definePluginEntry({
         return { appendSystemContext: `${base}\nMain may answer this lightweight task directly. Obey the runtime tool gate.` };
       } catch (error) {
         api.logger.error(`prompt route context failed: ${error.message}`);
-        if (config.failMode === 'closed') {
-          return { appendSystemContext: '[Delegation control unavailable]\nFail-closed mode is active. Do not call tools or claim execution succeeded.' };
-        }
+        if (config.failMode === 'closed') return { appendSystemContext: '[Delegation control unavailable]\nFail-closed mode is active. Do not call tools or claim execution succeeded.' };
       }
     }, { priority: 90, timeoutMs: Math.min(15_000, config.requestTimeoutMs + 1500) });
 
@@ -369,9 +370,7 @@ export default definePluginEntry({
           const params = event.params && typeof event.params === 'object' ? event.params : {};
           const requestedTarget = firstString(params.agentId, config.workerAgentIds[0]);
           const targetRole = roleFor(requestedTarget, config);
-          if (!['worker', 'verifier'].includes(targetRole)) {
-            return { block: true, blockReason: `Delegation control rejected target agent ${requestedTarget}` };
-          }
+          if (!['worker', 'verifier'].includes(targetRole)) return { block: true, blockReason: `Delegation control rejected target agent ${requestedTarget}` };
           const prepared = await request('/api/tasks/prepare', {
             parentAgentId: agentId,
             parentRunId: runId,
@@ -385,7 +384,7 @@ export default definePluginEntry({
           });
           const task = prepared.task;
           const marker = `[[OCWD_TASK:${task.id}:${task.ownerEpoch}]]`;
-          const pendingKey = firstString(event.toolCallId, `${runId}:${task.id}`);
+          const pendingKey = firstString(event.toolCallId, runId);
           pendingSpawns.set(pendingKey, task);
           return {
             params: {
@@ -409,11 +408,11 @@ export default definePluginEntry({
       const runId = effectiveRunId(event, ctx);
       const key = sessionKey(event, ctx);
       const binding = taskBinding(event, ctx);
-      const toolCallKey = firstString(event.toolCallId);
+      const spawnKey = firstString(event.toolCallId, runId);
       try {
-        if (event.toolName === 'sessions_spawn' && toolCallKey && pendingSpawns.has(toolCallKey)) {
-          const task = pendingSpawns.get(toolCallKey);
-          pendingSpawns.delete(toolCallKey);
+        if (event.toolName === 'sessions_spawn' && spawnKey && pendingSpawns.has(spawnKey)) {
+          const task = pendingSpawns.get(spawnKey);
+          pendingSpawns.delete(spawnKey);
           if (event.error) {
             await request('/api/tasks/terminal', { taskId: task.id, ownerEpoch: task.ownerEpoch, outcome: 'failed', error: safeError(event.error) });
           } else {
@@ -476,9 +475,7 @@ export default definePluginEntry({
         sessionId: sid || null,
         taskId: binding?.taskId || null,
       });
-      if (binding) {
-        request('/api/tasks/heartbeat', { taskId: binding.taskId, ownerEpoch: binding.ownerEpoch, agentId, runId: effectiveRunId(event, ctx), sessionId: sid, meaningful: false, phase: 'model-running', eventType: 'model_started' }).catch(() => {});
-      }
+      if (binding) request('/api/tasks/heartbeat', { taskId: binding.taskId, ownerEpoch: binding.ownerEpoch, agentId, runId: effectiveRunId(event, ctx), sessionId: sid, meaningful: false, phase: 'model-running', eventType: 'model_started' }).catch(() => {});
       await publishRuntime();
     });
 
@@ -497,9 +494,7 @@ export default definePluginEntry({
         sessionId: sid || existing.sessionId || null,
         taskId: binding?.taskId || existing.taskId || null,
       });
-      if (binding) {
-        request('/api/tasks/heartbeat', { taskId: binding.taskId, ownerEpoch: binding.ownerEpoch, agentId, runId: effectiveRunId(event, ctx), sessionId: sid, meaningful: event.outcome !== 'error', phase: event.outcome === 'error' ? 'model-error' : 'model-complete', eventType: 'model_ended' }).catch(() => {});
-      }
+      if (binding) request('/api/tasks/heartbeat', { taskId: binding.taskId, ownerEpoch: binding.ownerEpoch, agentId, runId: effectiveRunId(event, ctx), sessionId: sid, meaningful: event.outcome !== 'error', phase: event.outcome === 'error' ? 'model-error' : 'model-complete', eventType: 'model_ended' }).catch(() => {});
       await publishRuntime();
     });
 
@@ -553,17 +548,25 @@ export default definePluginEntry({
     });
 
     async function heartbeatTasks() {
+      // Union run- and session-bound tasks. Some OpenClaw spawn results omit a
+      // child run id, so session-only ownership must still receive heartbeats
+      // during long model calls.
       const unique = new Map();
-      for (const [runId, binding] of taskByRun) unique.set(`${binding.taskId}:${binding.ownerEpoch}`, { binding, runId });
-      for (const { binding, runId } of unique.values()) {
+      for (const [runId, binding] of taskByRun) unique.set(`${binding.taskId}:${binding.ownerEpoch}`, { binding, runId, session: '' });
+      for (const [session, binding] of taskBySession) {
+        const key = `${binding.taskId}:${binding.ownerEpoch}`;
+        const existing = unique.get(key);
+        unique.set(key, { binding, runId: existing?.runId || '', session });
+      }
+      for (const { binding, runId, session } of unique.values()) {
         const runtimeEntry = [...models.values()].find((entry) => entry.taskId === binding.taskId);
         try {
           await request('/api/tasks/heartbeat', {
             taskId: binding.taskId,
             ownerEpoch: binding.ownerEpoch,
             agentId: runtimeEntry?.agentId || null,
-            runId,
-            sessionId: runtimeEntry?.sessionId || null,
+            runId: runId || '',
+            sessionId: runtimeEntry?.sessionId || session || null,
             meaningful: false,
             phase: runtimeEntry?.status === 'running' ? 'running' : 'heartbeat',
             eventType: 'heartbeat',
