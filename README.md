@@ -20,7 +20,7 @@ The plugin publishes the active OpenClaw model/provider registry to the controll
 - Main/Worker/Verifier routes are mode-specific.
 - Thinking/reasoning levels are exposed only when upstream OpenClaw policy declares them.
 - **If upstream declares no levels, the only selectable value is `Auto`.** The controller never invents `low/medium/high/max` tiers.
-- Worker spawn receives the selected agent/model/thinking and the remaining hard timeout.
+- Worker spawn receives the selected agent/model/thinking. Stable OpenClaw `2026.7.1-2` rejects per-call subagent timeout overrides, so the native outer process cap is configured at `agents.defaults.subagents.runTimeoutSeconds` while the controller enforces per-task durable authority deadlines.
 
 ## Durable delegated execution
 
@@ -33,12 +33,14 @@ Every provider-isolated Worker/Verifier execution receives a persistent `wrk_...
 - lease, grace window, owner epoch, review point and terminal state;
 - structured bounded error information.
 
-Hard product ceilings are immutable:
+Hard control-plane execution-authority ceilings are immutable:
 
-- `quick`: **10 minutes maximum total runtime**;
-- `standard`: **60 minutes maximum total runtime**.
+- `quick`: **10 minutes**;
+- `standard`: **60 minutes**.
 
 Heartbeat proves liveness; it does not renew the lease. Only meaningful progress renews normal lease authority, always clamped to the immutable hard deadline. A limited grace window exists for transient scheduling gaps. Stale heartbeat, exhausted grace, hard deadline, cancellation, or ownership mismatch fails closed.
+
+When a hard deadline or cancel fires, subsequent plugin-governed tool authority is revoked immediately. Stable OpenClaw does not expose a safe external-plugin API that can always abort an already in-flight model call without deleting its session, so the native global subagent timeout remains the outer physical-stop backstop. This upstream boundary is explicit in `control-plane/docs/THREAT_MODEL.md`; the project does not claim a process-kill guarantee it cannot enforce.
 
 Root-control cancel/extend remains an authenticated fallback. Cancellation revokes the current owner epoch immediately. Extension cannot move the hard deadline.
 
@@ -115,7 +117,7 @@ openclaw gateway restart
 openclaw plugins inspect delegation-guard --runtime --json
 ```
 
-Use `control-plane/deploy/openclaw.example.json5` as the merge guide. The Gateway must receive the same random secret as `OCWD_AGENT_TOKEN` that the controller uses as `AGENT_INGEST_TOKEN`.
+Use `control-plane/deploy/openclaw.example.json5` as the merge guide. Current OpenClaw requires `allowConversationAccess: true` for this non-bundled plugin's conversation-sensitive routing hooks. The Gateway must also receive the same random secret as `OCWD_AGENT_TOKEN` that the controller uses as `AGENT_INGEST_TOKEN`.
 
 ## Acceptance gates
 
@@ -128,7 +130,7 @@ A release is not considered sealed unless all repository gates pass:
 - official OpenClaw plugin install/inspect smoke test;
 - pinned real OpenClaw `2026.7.1-2` / Node 24 Gateway E2E.
 
-The real-Gateway harness exercises actual OpenClaw plugin loading, routing/tool hooks, Main blocking, native Worker spawn and execution, MAIN takeover/fencing, one-shot override, model reporting, HARD proof, and controller-outage fail-closed behavior.
+The real-Gateway harness exercises actual OpenClaw plugin loading, conversation/model routing hooks, Main blocking, native Worker spawn and execution, MAIN takeover/fencing, one-shot override, model reporting, HARD proof, and controller-outage fail-closed behavior.
 
 ## Repository map
 
