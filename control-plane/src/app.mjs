@@ -50,6 +50,11 @@ function validateIdentifier(value, field, { required = false, max = 200 } = {}) 
   return text;
 }
 
+function taskPath(pathname) {
+  const match = pathname.match(/^\/api\/worker-tasks\/([^/]+)(?:\/(action))?$/);
+  return match ? { id: decodeURIComponent(match[1]), action: match[2] === 'action' } : null;
+}
+
 export async function createControlPlane(config) {
   const store = new StateStore(config);
   await store.init();
@@ -101,24 +106,16 @@ export async function createControlPlane(config) {
   }
 
   function isForbiddenStaticName(name) {
-    // Reject hidden segments (any path segment starting with '.') and common
-    // editor / backup / temp suffixes. Guards against accidentally shipping
-    // backup files in the public directory and exposing them anonymously.
     if (!name) return false;
     const segments = name.split('/');
     for (const segment of segments) {
       if (!segment) continue;
-      // Hidden dot-segments: ".bak-*", ".git", ".env", etc.
       if (segment.startsWith('.')) return true;
-      // Backup / editor temp extensions. Match ".<ext>" optionally followed by
-      // a separator (".bak", ".bak.1", ".bak-something", ".swp", ".tmp",
-      // ".orig", ".old", ".bak-20260726-220441").
       if (/\.bak(?:[.\-].*)?$/i.test(segment)) return true;
       if (/\.old(?:[.\-].*)?$/i.test(segment)) return true;
       if (/\.swp(?:[.\-].*)?$/i.test(segment)) return true;
       if (/\.tmp(?:[.\-].*)?$/i.test(segment)) return true;
       if (/\.orig(?:[.\-].*)?$/i.test(segment)) return true;
-      // Editor backup tail (e.g. "app.js~")
       if (/~$/.test(segment)) return true;
     }
     return false;
@@ -158,10 +155,10 @@ export async function createControlPlane(config) {
     try {
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
       const { pathname } = url;
+      const workerTaskPath = taskPath(pathname);
 
       if ((pathname === '/health' || pathname === '/health/live') && req.method === 'GET') return json(res, 200, { ok: true });
       if (pathname === '/health/ready' && req.method === 'GET') return json(res, 200, { ok: true, storeReady: true });
-
       if (pathname === '/api/login-config' && req.method === 'GET') return json(res, 200, { totpRequired: Boolean(config.totpSecret) });
 
       if (pathname === '/api/login' && req.method === 'POST') {
@@ -197,6 +194,34 @@ export async function createControlPlane(config) {
         if (!requireBrowserAuth(req, res)) return;
         return json(res, 200, store.snapshot(modeContext(url)));
       }
+      if (pathname === '/api/registry' && req.method === 'GET') {
+        if (!requireBrowserAuth(req, res)) return;
+        return json(res, 200, { registry: store.registrySnapshot(), routingProfiles: store.routingSnapshot() });
+      }
+      if (pathname === '/api/routing' && req.method === 'PUT') {
+        if (!requireBrowserAuth(req, res, { csrf: true })) return;
+        const body = await readJson(req, 64 * 1024);
+        const profile = await store.setRoutingProfile({ mode: body.mode, role: body.role, modelRef: body.modelRef, thinking: body.thinking, actor: 'web' });
+        return json(res, 200, { ok: true, profile, routingProfiles: store.routingSnapshot() });
+      }
+      if (pathname === '/api/worker-tasks' && req.method === 'GET') {
+        if (!requireBrowserAuth(req, res)) return;
+        return json(res, 200, { tasks: store.listWorkerTasks({ limit: url.searchParams.get('limit'), activeOnly: url.searchParams.get('active') === '1' }) });
+      }
+      if (workerTaskPath && !workerTaskPath.action && req.method === 'GET') {
+        if (!requireBrowserAuth(req, res)) return;
+        const task = store.getWorkerTask(workerTaskPath.id);
+        return task ? json(res, 200, { task }) : json(res, 404, { error: 'worker_task_not_found' });
+      }
+      if (workerTaskPath?.action && req.method === 'POST') {
+        if (!requireBrowserAuth(req, res, { csrf: true })) return;
+        const body = await readJson(req, 32 * 1024);
+        const expected = body.action === 'cancel' ? 'CANCEL_TASK' : body.action === 'extend' ? 'EXTEND_TASK' : '';
+        if (!expected || body.confirmation !== expected) return json(res, 400, { error: 'task_action_confirmation_required' });
+        if (!(await verifyControlCredential(body.reauthPassword || '', body.reauthTotp || ''))) return json(res, 403, { error: 'reauthentication_required' });
+        const task = await store.rootTaskAction({ id: workerTaskPath.id, action: body.action, minutes: body.minutes, actor: 'root-control' });
+        return json(res, 200, { ok: true, task });
+      }
       if (pathname === '/api/events' && req.method === 'GET') {
         if (!requireBrowserAuth(req, res)) return;
         return json(res, 200, { events: store.listEvents(url.searchParams.get('limit')) });
@@ -213,6 +238,12 @@ export async function createControlPlane(config) {
         const body = redact(await readJson(req, 128 * 1024));
         const runtimeStatus = await store.updateRuntimeStatus(body);
         return json(res, 200, { ok: true, runtimeStatus });
+      }
+      if (pathname === '/api/registry-sync' && req.method === 'POST') {
+        if (!requireAgent(req, res)) return;
+        const body = redact(await readJson(req, 512 * 1024));
+        const registry = await store.updateRegistry(body);
+        return json(res, 200, { ok: true, registryRevision: registry.revision, routingProfiles: store.routingSnapshot() });
       }
       if (pathname === '/api/stream' && req.method === 'GET') {
         if (!requireBrowserAuth(req, res)) return;
@@ -241,14 +272,8 @@ export async function createControlPlane(config) {
           const wantsPersistent = body.ttlMinutes === 0 && body.confirmation === 'ENABLE_MAIN_PERSISTENT';
           if (wantsPersistent && !config.mainAllowPersistent) return json(res, 403, { error: 'persistent_main_disabled' });
           const defaultTtl = scope === 'task' ? config.taskOverrideDefaultTtlMinutes : config.mainModeDefaultTtlMinutes;
-          const maxTtl = scope === 'task'
-            ? Math.min(config.taskOverrideMaxTtlMinutes, config.mainModeMaxTtlMinutes)
-            : config.mainModeMaxTtlMinutes;
-          if (wantsPersistent) {
-            ttlMinutes = 0;
-          } else {
-            ttlMinutes = Math.min(ttlMinutes || defaultTtl, maxTtl);
-          }
+          const maxTtl = scope === 'task' ? Math.min(config.taskOverrideMaxTtlMinutes, config.mainModeMaxTtlMinutes) : config.mainModeMaxTtlMinutes;
+          ttlMinutes = wantsPersistent ? 0 : Math.min(ttlMinutes || defaultTtl, maxTtl);
         } else if (scope === 'task') {
           ttlMinutes = Math.min(ttlMinutes || config.taskOverrideDefaultTtlMinutes, config.taskOverrideMaxTtlMinutes);
         } else {
@@ -268,39 +293,144 @@ export async function createControlPlane(config) {
         if (!requireBrowserAuth(req, res, { csrf: true })) return;
         const body = await readJson(req);
         const resolved = store.resolveMode({ sessionId: body.sessionId, projectId: body.projectId, taskMode: body.taskMode });
-        const route = routeTask({ task: body.task, mode: resolved.mode, properties: body.properties, workerAll: body.workerAll });
+        const route = routeTask({ task: body.task, mode: resolved.mode, properties: body.properties });
         const policy = buildPolicy({ mode: resolved.mode, role: 'main', routeActor: route.actor, workerExtraTools: config.workerExtraTools, verifierExtraTools: config.verifierExtraTools });
-        return json(res, 200, { route, policy, modeSource: resolved.source, preview: true });
+        return json(res, 200, { route, policy, modelRoute: store.resolveRouteConfig(resolved.mode, 'main'), modeSource: resolved.source, preview: true });
       }
 
       if (pathname === '/api/route' && req.method === 'POST') {
         if (!requireAgent(req, res)) return;
         const body = await readJson(req);
         const agentId = validateIdentifier(body.agentId, 'agent_id', { required: true });
-        const runId = validateIdentifier(body.runId || '', 'run_id');
+        const runId = validateIdentifier(body.runId || '', 'run_id', { required: true });
+        const sessionId = validateIdentifier(body.sessionId || '', 'session_id');
         const role = resolveAgentRole(agentId, config);
         if (role === 'unknown') return json(res, 403, { error: 'unknown_agent_id' });
-        const existingBinding = runId ? store.getRouteDecision(runId) : null;
+        const existingBinding = store.getRouteDecision(runId);
         let resolved;
         let route;
+        let task = null;
+
         if (existingBinding) {
-          const binding = store.validateRouteBinding(runId, agentId, body.sessionId || '');
+          const binding = store.validateRouteBinding(runId, agentId, sessionId);
           if (!binding.valid) return json(res, 409, { error: binding.reason });
           route = binding.decision.route;
           resolved = { mode: route.mode, source: binding.decision.modeSource || 'run-binding' };
+          if (binding.decision.taskId) task = store.getWorkerTask(binding.decision.taskId);
+        } else if (role === 'main') {
+          resolved = await store.consumeMode({ sessionId, projectId: body.projectId });
+          route = routeTask({ task: body.task, mode: resolved.mode, properties: body.properties });
         } else {
-          resolved = role === 'main'
-            ? await store.consumeMode({ sessionId: body.sessionId, projectId: body.projectId })
-            : store.resolveMode({ sessionId: body.sessionId, projectId: body.projectId, includeTask: false });
-          route = role === 'main'
-            ? routeTask({ task: body.task, mode: resolved.mode, properties: body.properties, workerAll: body.workerAll })
-            : { mode: resolved.mode, actor: role === 'worker' ? 'worker' : 'verifier', decision: 'role-bound', score: null, confidence: 1, properties: {}, reasons: [] };
+          const taskId = validateIdentifier(body.taskId || '', 'task_id', { required: true });
+          const ownerEpoch = Number(body.ownerEpoch);
+          const lease = store.validateWorkerLease({ id: taskId, ownerEpoch, agentId, runId: '', sessionId: '' });
+          if (!lease.valid) return json(res, 409, { error: lease.reason });
+          task = await store.bindWorkerTask({
+            id: taskId, ownerEpoch, agentId, runId, sessionId, sessionKey: body.sessionKey,
+            threadId: body.threadId, turnId: body.turnId, pluginInstanceId: body.instanceId,
+          });
+          resolved = { mode: task.route.mode, source: 'worker-task' };
+          route = {
+            mode: task.route.mode,
+            actor: role,
+            decision: 'durable-worker-task',
+            score: null,
+            confidence: 1,
+            properties: task.properties || {},
+            reasons: [],
+            taskId,
+          };
         }
-        if (body.hook === 'before_prompt_build') await store.markRouteObserved({ instanceId: body.instanceId, runId, agentId, route, modeSource: resolved.source, sessionId: body.sessionId, projectId: body.projectId });
-        else if (runId && !existingBinding) await store.markRouteObserved({ instanceId: '', runId, agentId, route, modeSource: resolved.source, sessionId: body.sessionId, projectId: body.projectId });
+
+        await store.markRouteObserved({
+          instanceId: body.instanceId,
+          runId,
+          agentId,
+          route,
+          modeSource: resolved.source,
+          sessionId,
+          projectId: body.projectId,
+          taskId: task?.id || body.taskId,
+          ownerEpoch: task?.ownerEpoch ?? (Number.isInteger(Number(body.ownerEpoch)) ? Number(body.ownerEpoch) : null),
+        });
         const policy = buildPolicy({ mode: resolved.mode, role, routeActor: route.actor, workerExtraTools: config.workerExtraTools, verifierExtraTools: config.verifierExtraTools });
-        const event = await store.appendEvent({ type: 'route.decided', ...redact(route), role, agentId, modeSource: resolved.source, sessionId: body.sessionId || null, projectId: body.projectId || null });
-        return json(res, 200, { route, policy, role, modeSource: resolved.source, eventId: event.id });
+        const modelRoute = store.resolveRouteConfig(resolved.mode, role);
+        const event = await store.appendEvent({ type: 'route.decided', ...redact(route), role, agentId, modeSource: resolved.source, sessionId: sessionId || null, projectId: body.projectId || null, taskId: task?.id || null });
+        return json(res, 200, { route, policy, modelRoute, role, modeSource: resolved.source, task, eventId: event.id });
+      }
+
+      if (pathname === '/api/tasks/prepare' && req.method === 'POST') {
+        if (!requireAgent(req, res)) return;
+        const body = await readJson(req, 128 * 1024);
+        const parentAgentId = validateIdentifier(body.parentAgentId, 'parent_agent_id', { required: true });
+        if (resolveAgentRole(parentAgentId, config) !== 'main') return json(res, 403, { error: 'only_main_can_prepare_worker' });
+        const parentRunId = validateIdentifier(body.parentRunId, 'parent_run_id', { required: true });
+        const parentBinding = store.validateRouteBinding(parentRunId, parentAgentId, body.parentSessionId || '');
+        if (!parentBinding.valid) return json(res, 409, { error: parentBinding.reason });
+        if (parentBinding.decision.route?.actor !== 'worker') return json(res, 409, { error: 'parent_route_not_delegated' });
+        const targetAgentId = validateIdentifier(body.targetAgentId, 'target_agent_id', { required: true });
+        const targetRole = resolveAgentRole(targetAgentId, config);
+        if (!['worker', 'verifier'].includes(targetRole)) return json(res, 409, { error: 'target_agent_not_worker_or_verifier' });
+        const properties = parentBinding.decision.route?.properties || {};
+        const task = await store.prepareWorkerTask({
+          kind: body.kind === 'quick' ? 'quick' : store.inferTaskKind(properties),
+          role: targetRole,
+          mode: parentBinding.decision.route.mode,
+          targetAgentId,
+          task: body.task,
+          properties,
+          parent: {
+            agentId: parentAgentId,
+            runId: parentRunId,
+            sessionId: body.parentSessionId,
+            sessionKey: body.parentSessionKey,
+            projectId: parentBinding.decision.projectId,
+          },
+          provenance: {
+            pluginInstanceId: body.instanceId,
+            toolCallId: body.toolCallId,
+            createdBy: 'main',
+            openclawVersion: body.openclawVersion,
+          },
+        });
+        const hardSeconds = Math.max(1, Math.floor((Date.parse(task.lease.hardDeadline) - Date.now()) / 1000));
+        return json(res, 201, {
+          task,
+          spawn: {
+            agentId: task.route.targetAgentId,
+            model: task.route.modelRef || undefined,
+            thinking: task.route.thinking && task.route.thinking !== 'auto' ? task.route.thinking : undefined,
+            runTimeoutSeconds: hardSeconds,
+          },
+        });
+      }
+
+      if (pathname === '/api/tasks/bind' && req.method === 'POST') {
+        if (!requireAgent(req, res)) return;
+        const body = await readJson(req, 64 * 1024);
+        const task = await store.bindWorkerTask({
+          id: body.taskId, ownerEpoch: Number(body.ownerEpoch), agentId: body.agentId, runId: body.runId,
+          sessionId: body.sessionId, sessionKey: body.sessionKey, threadId: body.threadId, turnId: body.turnId,
+          pluginInstanceId: body.instanceId,
+        });
+        return json(res, 200, { ok: true, task });
+      }
+
+      if (pathname === '/api/tasks/heartbeat' && req.method === 'POST') {
+        if (!requireAgent(req, res)) return;
+        const body = redact(await readJson(req, 64 * 1024));
+        const task = await store.heartbeatWorkerTask({
+          id: body.taskId, ownerEpoch: Number(body.ownerEpoch), agentId: body.agentId, runId: body.runId,
+          sessionId: body.sessionId, meaningful: body.meaningful === true, phase: body.phase, summary: body.summary, eventType: body.eventType,
+        });
+        return json(res, 200, { ok: true, task });
+      }
+
+      if (pathname === '/api/tasks/terminal' && req.method === 'POST') {
+        if (!requireAgent(req, res)) return;
+        const body = redact(await readJson(req, 64 * 1024));
+        const task = await store.finishWorkerTask({ id: body.taskId, ownerEpoch: Number(body.ownerEpoch), outcome: body.outcome, error: body.error, reviewPoint: body.reviewPoint });
+        return json(res, 200, { ok: true, task });
       }
 
       if (pathname === '/api/policy' && req.method === 'POST') {
@@ -316,7 +446,9 @@ export async function createControlPlane(config) {
         const baseResolved = store.resolveMode({ sessionId: effectiveSessionId, projectId: effectiveProjectId, includeTask: false });
         const resolved = binding.decision?.modeSource === 'task'
           ? { mode: binding.decision.route.mode, source: 'task-run-binding' }
-          : baseResolved;
+          : binding.decision?.modeSource === 'worker-task'
+            ? { mode: binding.decision.route.mode, source: 'worker-task' }
+            : baseResolved;
         const routeActor = binding.decision?.route?.actor || (resolved.mode === 'main' ? 'main' : role === 'main' ? 'worker' : role);
         const policy = buildPolicy({ mode: resolved.mode, role, routeActor, workerExtraTools: config.workerExtraTools, verifierExtraTools: config.verifierExtraTools });
         return json(res, 200, { mode: resolved.mode, modeSource: resolved.source, role, routeActor, policy });
@@ -334,20 +466,34 @@ export async function createControlPlane(config) {
           await store.appendEvent({ type: 'tool.blocked', role, agentId, tool: denied.normalizedTool, runId: body.runId || null, reason: denied.reason });
           return json(res, 200, denied);
         }
+
+        if (role === 'worker' || role === 'verifier') {
+          const taskId = body.taskId || binding.decision?.taskId;
+          const ownerEpoch = body.ownerEpoch ?? binding.decision?.ownerEpoch;
+          const lease = store.validateWorkerLease({ id: taskId, ownerEpoch, agentId, runId: body.runId, sessionId: body.sessionId || '' });
+          if (!lease.valid) {
+            const denied = { allowed: false, reason: lease.reason, normalizedTool: String(body.tool || '').toLowerCase(), taskId };
+            await store.appendEvent({ type: 'tool.blocked', role, agentId, tool: denied.normalizedTool, runId: body.runId || null, taskId, reason: denied.reason });
+            return json(res, 200, denied);
+          }
+        }
+
         const effectiveSessionId = binding.decision?.sessionId || body.sessionId;
         const effectiveProjectId = binding.decision?.projectId || body.projectId;
         const baseResolved = store.resolveMode({ sessionId: effectiveSessionId, projectId: effectiveProjectId, includeTask: false });
         const resolved = binding.decision?.modeSource === 'task'
           ? { mode: binding.decision.route.mode, source: 'task-run-binding' }
-          : baseResolved;
+          : binding.decision?.modeSource === 'worker-task'
+            ? { mode: binding.decision.route.mode, source: 'worker-task' }
+            : baseResolved;
         const routeActor = binding.decision?.route?.actor || (resolved.mode === 'main' ? 'main' : role === 'main' ? 'worker' : role);
         const policy = buildPolicy({ mode: resolved.mode, role, routeActor, workerExtraTools: config.workerExtraTools, verifierExtraTools: config.verifierExtraTools });
         const decision = toolDecision(policy, body.tool);
         if (body.hook === 'before_tool_call') await store.markToolCheckObserved({ instanceId: body.instanceId });
         if (!decision.allowed || config.auditAllowedTools) {
-          await store.appendEvent({ type: decision.allowed ? 'tool.allowed' : 'tool.blocked', role, agentId, tool: decision.normalizedTool, mode: resolved.mode, runId: body.runId || null, sessionId: effectiveSessionId || null, reason: decision.reason });
+          await store.appendEvent({ type: decision.allowed ? 'tool.allowed' : 'tool.blocked', role, agentId, tool: decision.normalizedTool, mode: resolved.mode, runId: body.runId || null, sessionId: effectiveSessionId || null, taskId: binding.decision?.taskId || null, reason: decision.reason });
         }
-        return json(res, 200, { ...decision, policy, role, routeActor, mode: resolved.mode, modeSource: resolved.source });
+        return json(res, 200, { ...decision, policy, role, routeActor, mode: resolved.mode, modeSource: resolved.source, taskId: binding.decision?.taskId || null });
       }
 
       if (req.method === 'GET' && await serveStatic(res, pathname)) return;
