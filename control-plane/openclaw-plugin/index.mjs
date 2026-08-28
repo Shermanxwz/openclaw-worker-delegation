@@ -128,8 +128,6 @@ export default definePluginEntry({
       if (key && runAliasBySession.has(key)) return runAliasBySession.get(key);
       const hostRun = firstString(ctx.runId, event.runId);
       if (hostRun) {
-        // Pin the host run to the session so later hooks that omit runId still
-        // address the same durable route binding.
         if (key) runAliasBySession.set(key, hostRun);
         return hostRun;
       }
@@ -321,7 +319,7 @@ export default definePluginEntry({
         const task = result.task || null;
         const base = `[Delegation control]\nMode: ${route.mode}. Assigned actor: ${route.actor}. Decision: ${route.decision}.`;
         if (result.role === 'main' && route.actor === 'worker') {
-          return { appendSystemContext: `${base}\nYou are the autonomous coordinator. Do not perform body-work yourself. Decompose as needed and use sessions_spawn with an allowed Worker agent. The control plugin will select the configured Worker model/thinking and hard timeout. After the Worker returns, independently inspect/review the result; use the verifier agent for risky or mutating work. Do not ask the user to choose whether delegation should happen.` };
+          return { appendSystemContext: `${base}\nYou are the autonomous coordinator. Do not perform body-work yourself. Decompose as needed and use sessions_spawn with an allowed Worker agent. The control plugin will select the configured Worker model/thinking; the durable task hard deadline remains authoritative. After the Worker returns, independently inspect/review the result; use the verifier agent for risky or mutating work. Do not ask the user to choose whether delegation should happen.` };
         }
         if (result.role === 'worker') {
           return { appendSystemContext: `${base}\nDurable task: ${task?.id || route.taskId || 'unknown'}. You are body-worker execution. Work autonomously within the assigned task, report concrete progress, never spawn another agent, and stop if the lease/tool gate rejects an action.` };
@@ -393,7 +391,6 @@ export default definePluginEntry({
               task: `${marker}\n${String(params.task || '')}`,
               ...(prepared.spawn?.model ? { model: prepared.spawn.model } : {}),
               ...(prepared.spawn?.thinking ? { thinking: prepared.spawn.thinking } : {}),
-              runTimeoutSeconds: prepared.spawn?.runTimeoutSeconds || (task.kind === 'quick' ? 600 : 3600),
             },
           };
         }
@@ -548,9 +545,6 @@ export default definePluginEntry({
     });
 
     async function heartbeatTasks() {
-      // Union run- and session-bound tasks. Some OpenClaw spawn results omit a
-      // child run id, so session-only ownership must still receive heartbeats
-      // during long model calls.
       const unique = new Map();
       for (const [runId, binding] of taskByRun) unique.set(`${binding.taskId}:${binding.ownerEpoch}`, { binding, runId, session: '' });
       for (const [session, binding] of taskBySession) {
