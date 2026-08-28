@@ -1,31 +1,31 @@
 // Merge the relevant pieces into your existing OpenClaw configuration.
-// Dynamic Main/Auto/Worker switching is enforced by the plugin hook. Do not
-// statically deny main's execution tools if you expect MAIN mode to grant them;
-// OpenClaw policy layers can only narrow permissions, never grant back a deny.
+// v0.3 keeps OpenClaw as the execution/model authority: the plugin uses
+// before_model_resolve for turn-scoped model routing and sessions_spawn
+// parameter rewriting for Worker/Verifier model + thinking + hard timeout.
 {
   agents: {
     defaults: {
       subagents: {
         maxConcurrent: 4,
-        runTimeoutSeconds: 900,
+        // Safety fallback. The plugin sets each delegated native spawn to
+        // quick <= 600s or standard <= 3600s.
+        runTimeoutSeconds: 3600,
         requireAgentId: true,
       },
     },
-    list: [
-      {
-        id: "main",
+    entries: {
+      main: {
         model: "<provider/strong-model>",
         subagents: {
           delegationMode: "prefer",
           allowAgents: ["body-worker", "verifier"],
           requireAgentId: true,
         },
-        // Main needs the superset statically available. delegation-guard vetoes
-        // tools dynamically before execution according to the selected mode.
+        // Main needs the static superset. delegation-guard vetoes tools before
+        // execution according to the authoritative route/mode.
         tools: { profile: "coding" },
       },
-      {
-        id: "body-worker",
+      "body-worker": {
         model: "<provider/worker-model>",
         sandbox: {
           mode: "all",
@@ -38,8 +38,7 @@
           elevated: { enabled: false },
         },
       },
-      {
-        id: "verifier",
+      verifier: {
         model: "<provider/verifier-model>",
         sandbox: {
           mode: "all",
@@ -48,11 +47,11 @@
         },
         tools: {
           allow: ["read", "web_search", "web_fetch", "session_status"],
-          deny: ["group:runtime", "write", "edit", "apply_patch"],
+          deny: ["group:runtime", "write", "edit", "apply_patch", "sessions_spawn"],
           elevated: { enabled: false },
         },
       },
-    ],
+    },
   },
 
   plugins: {
@@ -60,10 +59,14 @@
       "delegation-guard": {
         enabled: true,
         hooks: {
-          // Must exceed requestTimeoutMs. A timed-out before_tool_call handler
-          // is no longer an effective fail-closed boundary.
+          // Current OpenClaw requires explicit opt-in for non-bundled plugins
+          // that read conversation prompts or inject system context.
+          allowConversationAccess: true,
+          allowPromptInjection: true,
           timeouts: {
+            before_model_resolve: 5000,
             before_prompt_build: 5000,
+            before_agent_run: 5000,
             before_tool_call: 5000,
           },
         },
