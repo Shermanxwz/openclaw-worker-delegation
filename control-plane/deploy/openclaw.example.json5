@@ -1,14 +1,16 @@
 // Merge the relevant pieces into your existing OpenClaw configuration.
 // v0.3 keeps OpenClaw as the execution/model authority: the plugin uses
-// before_model_resolve for turn-scoped model routing and sessions_spawn
-// parameter rewriting for Worker/Verifier model + thinking + hard timeout.
+// before_model_resolve for turn-scoped model routing and rewrites the supported
+// sessions_spawn fields for Worker/Verifier agent + model + thinking.
 {
   agents: {
     defaults: {
       subagents: {
         maxConcurrent: 4,
-        // Safety fallback. The plugin sets each delegated native spawn to
-        // quick <= 600s or standard <= 3600s.
+        // Official OpenClaw 2026.7 configures subagent process timeout here;
+        // sessions_spawn rejects per-call runTimeoutSeconds. Keep this <= 3600
+        // as the native outer safety cap. The controller separately enforces
+        // quick=600s / standard=3600s durable authority deadlines.
         runTimeoutSeconds: 3600,
         requireAgentId: true,
       },
@@ -60,7 +62,7 @@
         enabled: true,
         hooks: {
           // Current OpenClaw requires explicit opt-in for non-bundled plugins
-          // that read conversation prompts or inject system context.
+          // that receive conversation-sensitive model/run lifecycle hooks.
           allowConversationAccess: true,
           allowPromptInjection: true,
           timeouts: {
