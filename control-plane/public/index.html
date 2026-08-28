@@ -6,256 +6,86 @@
   <meta name="color-scheme" content="light">
   <title>OpenClaw 委派控制台</title>
   <link rel="icon" type="image/svg+xml" href="/icon.svg">
-  <link rel="alternate icon" type="image/png" sizes="32x32" href="/favicon-32.png">
-  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
-  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-  <link rel="apple-touch-icon" type="image/svg+xml" href="/apple-touch-icon.svg">
-  <meta name="theme-color" content="#007aff">
-  <meta name="description" content="OpenClaw 委派控制台：Worker / Auto / Main 模式切换、运行时模型上报与工具拦截记录。">
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
+<body data-page="home">
   <main class="shell">
-    <section id="login-view" class="card login-card hidden">
-      <p class="eyebrow">OPENCLAW CONTROL PLANE</p>
-      <h1>远程控制台</h1>
-      <p class="lede">切换 Worker / Auto / Main，查看实际模型、路由决策与工具拦截记录。</p>
-      <form id="login-form">
+    <section id="login-view" class="login-card hidden">
+      <div class="brand brand-login"><img src="/icon.svg" alt="" width="42" height="42"><div><p class="eyebrow">OPENCLAW CONTROL PLANE</p><h1>委派控制台</h1></div></div>
+      <p class="muted">登录后只显示运行控制；诊断、任务和审计已拆分到独立页面。</p>
+      <form id="login-form" class="stack">
         <label>控制台密码<input id="password" type="password" autocomplete="current-password" required></label>
-        <label id="login-totp-label" class="hidden">动态验证码 (TOTP)<input id="login-totp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6"></label>
-        <button type="submit" class="primary">登录</button>
-        <p id="login-error" class="error" aria-live="polite"></p>
+        <label id="login-totp-label" class="hidden">动态验证码<input id="login-totp" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></label>
+        <button class="primary" type="submit">登录</button>
+        <p id="login-error" class="error"></p>
       </form>
     </section>
 
-    <section id="dashboard" class="hidden">
+    <section id="app-view" class="hidden">
       <header class="topbar">
-        <div class="topbar-title">
-          <div class="brand">
-            <img class="brand-mark" src="/icon.svg" alt="" width="36" height="36" aria-hidden="true">
-            <div>
-              <p class="eyebrow">OPENCLAW CONTROL PLANE</p>
-              <h1>委派控制台</h1>
-            </div>
-          </div>
-        </div>
-        <div class="top-actions">
-          <span id="connection" class="chip chip-neutral">连接中</span>
-          <button id="refresh" class="ghost" title="立即刷新">刷新</button>
-          <button id="logout" class="ghost">退出</button>
-        </div>
+        <a class="brand" href="/"><img src="/icon.svg" alt="" width="42" height="42"><div><p class="eyebrow">OPENCLAW CONTROL PLANE</p><h1>委派控制台</h1></div></a>
+        <nav class="nav" aria-label="控制台导航">
+          <a class="active" href="/">控制</a><a href="/tasks.html">任务</a><a href="/runtime.html">运行时</a><a href="/audit.html">审计</a><a href="/settings.html">设置</a>
+        </nav>
+        <div class="top-actions"><span id="connection" class="status-pill neutral">连接中</span><button id="refresh" class="text-button">刷新</button><button id="logout" class="text-button">退出</button></div>
       </header>
 
-      <section id="enforcement-banner" class="banner banner-advisory" aria-live="polite">
-        <div class="banner-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 2 1 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-11-3Zm-1 14-4-4 1.41-1.41L11 13.17l5.59-5.58L18 9l-7 7Z"/></svg>
+      <section id="enforcement-banner" class="notice warning hidden">
+        <strong id="enforcement-state">ADVISORY</strong>
+        <span id="enforcement-detail">等待 OpenClaw 原生插件完成路由和工具前置钩子实测。</span>
+      </section>
+
+      <section class="hero-row">
+        <div>
+          <p class="eyebrow">ACTIVE MODE</p>
+          <h2 id="resolved-mode" class="mode-title">AUTO</h2>
+          <p id="mode-source" class="muted">来源：全局默认</p>
         </div>
-        <div class="banner-body">
-          <strong id="enforcement-state">ADVISORY</strong>
-          <span id="enforcement-detail">等待原生插件产生真实路由和工具前置调用</span>
+        <div class="scope-compact">
+          <label>作用范围<select id="scope"><option value="global">全局默认</option><option value="project">当前项目</option><option value="session">当前会话</option><option value="task">下一次任务</option></select></label>
+          <label id="scope-id-label" class="hidden">标识<input id="scope-id" placeholder="project / session id" maxlength="200"></label>
         </div>
       </section>
 
-      <section class="card mode-card" id="mode-card">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">ACTIVE MODE</p>
-            <h2 id="resolved-mode">AUTO</h2>
-            <p id="mode-source" class="muted">来源：全局默认</p>
-          </div>
-          <div class="mode-meta" id="mode-meta" aria-live="polite">
-            <span class="chip chip-neutral" id="mode-meta-kind">持久生效</span>
-            <span class="chip chip-neutral" id="mode-meta-ttl">无到期</span>
-            <span class="chip chip-neutral hidden" id="mode-meta-countdown"></span>
-            <p class="muted mode-meta-help" id="mode-meta-help">Worker / Auto 持久生效，直到你手动切换。</p>
-          </div>
-        </div>
-
-        <div class="scope-fields">
-          <label>作用范围
-            <select id="scope">
-              <option value="task">下一次任务（一次性）</option>
-              <option value="session" selected>当前运行时会话</option>
-              <option value="project">当前项目</option>
-              <option value="global">全局默认</option>
-            </select>
-          </label>
-          <label id="scope-id-label" class="hidden">会话 / 项目 标识
-            <input id="scope-id" value="default-session" maxlength="200" placeholder="session 或 project 标识">
-          </label>
-          <label id="scope-help-label" class="scope-help-label">
-            <span class="scope-help-row">
-              <span>本次切换作用范围</span>
-            </span>
-            <span class="scope-help-text" id="scope-help-text">当前运行时会话 · 该会话所有任务都按此模式路由。</span>
-          </label>
-        </div>
-
-        <div class="mode-grid">
-          <button class="mode-button mode-worker" data-mode="worker">
-            <span class="mode-button-title">仅 Worker</span>
-            <span class="mode-button-desc">主控只能规划、派发与审核。Worker 处理实际工具型工作。持久生效，直到手动切换。</span>
-            <span class="mode-button-tag">持久生效</span>
-          </button>
-          <button class="mode-button mode-auto" data-mode="auto">
-            <span class="mode-button-title">自动判断</span>
-            <span class="mode-button-desc">路由器按任务性质自动选 Main（轻量问答）或 Worker（工具型工作）。持久生效，直到手动切换。</span>
-            <span class="mode-button-tag">持久生效</span>
-          </button>
-          <button class="mode-button mode-main" data-mode="main">
-            <span class="mode-button-title">仅主控</span>
-            <span class="mode-button-desc">主控可执行命令、修改文件；现有 Worker / Verifier 立即冻结。需二次确认密码，有效期在弹窗内选择。</span>
-            <span class="mode-button-tag">限时 / 持久可选</span>
-          </button>
-        </div>
-
-        <p class="muted scope-note">下一次任务 = 仅下一条真实 Main 路由生效，未消费会按所选 MAIN 有效期过期；Auto / Worker 不存在「下一次任务」语义。</p>
-
-        <div class="inline-actions">
-          <button id="clear-override" class="ghost">清除当前覆盖</button>
-          <button id="use-runtime-session" class="ghost">使用运行时会话 ID</button>
-        </div>
-        <p id="mode-message" class="muted" aria-live="polite"></p>
-      </section>
-
-      <section class="grid-two">
-        <article class="card">
-          <div class="section-heading compact">
-            <div>
-              <p class="eyebrow">RUNTIME MODEL</p>
-              <h2 id="main-model">未上报</h2>
-              <p id="main-model-meta" class="muted">等待 OpenClaw 原生插件心跳</p>
-            </div>
-            <span id="runtime-updated" class="chip chip-neutral">尚未上报</span>
-          </div>
-          <pre id="worker-models" class="result result-small">暂无 Worker 上报</pre>
+      <section class="mode-grid" aria-label="运行模式">
+        <article class="mode-card" data-mode-card="worker">
+          <button class="mode-select" data-mode-select="worker" type="button"><span class="mode-index">01</span><span><strong>仅 Worker</strong><small>Main 自主规划、派发与复核；实体工作全部交给 Worker。</small></span><span class="mode-badge">持久</span></button>
+          <div class="route-panel" data-route-panel="worker"></div>
         </article>
-        <article class="card">
-          <div class="section-heading compact">
-            <div>
-              <p class="eyebrow">ENFORCEMENT PROOF</p>
-              <h2>运行时证明</h2>
-            </div>
-            <span class="chip chip-neutral" id="enforcement-state-chip">ADVISORY</span>
-          </div>
-          <dl class="proof-grid">
-            <div><dt>插件心跳新鲜</dt><dd id="proof-heartbeat" class="proof-no">否</dd></div>
-            <div><dt>路由钩子实测</dt><dd id="proof-route" class="proof-no">否</dd></div>
-            <div><dt>工具钩子实测</dt><dd id="proof-tool" class="proof-no">否</dd></div>
-            <div><dt>实例一致</dt><dd id="proof-instance" class="proof-no">否</dd></div>
-          </dl>
-          <p class="muted proof-help">HARD 不是插件自报：必须由同一实例的真实 <code>before_prompt_build</code> 与 <code>before_tool_call</code> 调用被控制器观察到。</p>
+        <article class="mode-card" data-mode-card="auto">
+          <button class="mode-select" data-mode-select="auto" type="button"><span class="mode-index">02</span><span><strong>自动判断</strong><small>轻量问答留在 Main；工具、变更、复杂或不确定任务自动委派。</small></span><span class="mode-badge">推荐</span></button>
+          <div class="route-panel" data-route-panel="auto"></div>
+        </article>
+        <article class="mode-card" data-mode-card="main">
+          <button class="mode-select" data-mode-select="main" type="button"><span class="mode-index">03</span><span><strong>仅主控</strong><small>只运行 Main；现有 Worker / Verifier 立即被 lease fence。</small></span><span class="mode-badge danger">提权</span></button>
+          <div class="route-panel" data-route-panel="main"></div>
         </article>
       </section>
 
-      <section class="metrics" id="metrics"></section>
-
-      <section class="grid-two">
-        <article class="card">
-          <div class="section-heading compact">
-            <div><p class="eyebrow">ROUTE PREVIEW</p><h2>测试自动路由</h2></div>
-          </div>
-          <form id="route-form">
-            <textarea id="route-task" rows="4" maxlength="20000" placeholder="例如：扫描仓库并修复失败的测试"></textarea>
-            <button class="primary" type="submit">预览路由</button>
-          </form>
-          <pre id="route-result" class="result">尚未判断</pre>
-        </article>
-        <article class="card">
-          <div class="section-heading compact">
-            <div><p class="eyebrow">LATEST REAL ROUTE</p><h2>最近真实决策</h2></div>
-          </div>
-          <pre id="latest-route" class="result">暂无记录</pre>
-        </article>
-      </section>
-
-      <section class="card">
-        <div class="section-heading compact">
-          <div><p class="eyebrow">AUDIT STREAM</p><h2>实时事件</h2></div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>时间</th><th>类型</th><th>角色 / Agent</th><th>内容</th></tr>
-            </thead>
-            <tbody id="events"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <footer class="app-footer">
-        <span class="muted">OpenClaw Delegation Control Plane</span>
-        <span class="muted" id="build-info"></span>
-      </footer>
+      <div class="route-savebar">
+        <div><strong>OpenClaw 模型路由</strong><span id="registry-note" class="muted">等待 Registry 同步</span></div>
+        <button id="save-routing" class="primary" type="button">保存模型路由</button>
+      </div>
+      <p id="page-message" class="muted page-message" aria-live="polite"></p>
     </section>
   </main>
 
-  <dialog id="main-dialog" aria-labelledby="main-dialog-title">
-    <form method="dialog" id="main-form" class="dialog-form">
-      <p class="eyebrow" id="main-dialog-eyebrow">PRIVILEGE ELEVATION</p>
-      <h2 id="main-dialog-title">启用仅主控模式</h2>
-      <p class="muted" id="main-dialog-help">这会临时允许主控执行命令和修改文件，同时禁止自动生成 Worker，并在所选有效期后自动恢复。</p>
-      <ul class="checklist" id="main-dialog-checklist">
-        <li>需要重新输入控制台密码与（若已启用）动态验证码。</li>
-        <li>切换只对所选作用范围生效。</li>
-        <li>随时可在面板里切回 Auto / Worker 立即撤销。</li>
-      </ul>
-
-      <fieldset class="duration-fieldset" id="duration-fieldset">
-        <legend>仅主控有效时间</legend>
-        <div class="duration-options" id="duration-options" role="radiogroup" aria-label="仅主控有效时间">
-          <label class="duration-option">
-            <input type="radio" name="main-duration" value="15">
-            <span class="duration-value">15 分钟</span>
-            <span class="duration-hint">限时主控</span>
-          </label>
-          <label class="duration-option">
-            <input type="radio" name="main-duration" value="30" checked>
-            <span class="duration-value">30 分钟</span>
-            <span class="duration-hint">限时主控（默认）</span>
-          </label>
-          <label class="duration-option">
-            <input type="radio" name="main-duration" value="60">
-            <span class="duration-value">60 分钟</span>
-            <span class="duration-hint">限时主控</span>
-          </label>
-          <label class="duration-option">
-            <input type="radio" name="main-duration" value="120">
-            <span class="duration-value">120 分钟</span>
-            <span class="duration-hint">限时主控</span>
-          </label>
-          <label class="duration-option is-persistent">
-            <input type="radio" name="main-duration" value="0">
-            <span class="duration-value">直到手动切回 Auto</span>
-            <span class="duration-hint">持久主控 · 需后端开启</span>
-          </label>
-        </div>
-        <p class="duration-help" id="duration-help">选「直到手动切回 Auto」则需要额外输入确认口令。</p>
-      </fieldset>
-
-      <div class="dialog-summary" id="main-dialog-summary" aria-live="polite">
-        <span class="dialog-summary-label">本次摘要</span>
-        <span class="dialog-summary-value" id="main-dialog-summary-value">30 分钟</span>
-        <span class="dialog-summary-mode" id="main-dialog-summary-mode">仅主控 · 到期自动恢复</span>
-        <span class="dialog-summary-hint" id="main-dialog-summary-hint">期限 30 分钟 · 到期后自动恢复 Auto</span>
+  <dialog id="main-dialog">
+    <form id="main-form" class="dialog-form" method="dialog">
+      <p class="eyebrow">PRIVILEGE ELEVATION</p><h2>启用仅主控</h2>
+      <p class="muted">这会立即 fence 所有活动 Worker / Verifier。需要重新认证。</p>
+      <div class="duration-grid">
+        <label><input type="radio" name="main-duration" value="15">15 分钟</label>
+        <label><input type="radio" name="main-duration" value="30" checked>30 分钟</label>
+        <label><input type="radio" name="main-duration" value="60">60 分钟</label>
+        <label><input type="radio" name="main-duration" value="120">120 分钟</label>
+        <label class="wide"><input type="radio" name="main-duration" value="0">直到手动切回</label>
       </div>
-
-      <label>重新输入控制台密码
-        <input id="reauth-password" type="password" autocomplete="current-password" required>
-      </label>
-      <label id="reauth-totp-label" class="hidden">动态验证码 (TOTP)
-        <input id="reauth-totp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6]" maxlength="6">
-      </label>
-      <label id="reauth-confirm-label" class="hidden">输入 <code>ENABLE_MAIN_PERSISTENT</code> 以确认开启持久主控
-        <input id="reauth-confirm" autocomplete="off" spellcheck="false">
-      </label>
-      <div class="dialog-actions">
-        <button type="button" id="cancel-main" class="ghost" value="cancel">取消</button>
-        <button type="button" id="confirm-main" class="danger" value="default">确认提升</button>
-      </div>
+      <label>控制台密码<input id="reauth-password" type="password" autocomplete="current-password" required></label>
+      <label id="reauth-totp-label" class="hidden">动态验证码<input id="reauth-totp" inputmode="numeric" maxlength="6"></label>
+      <div class="dialog-actions"><button id="cancel-main" class="secondary" type="button">取消</button><button id="confirm-main" class="danger-button" type="button">确认启用</button></div>
     </form>
   </dialog>
-
-  <script type="module" src="/app.js"></script>
+  <script src="/app.js" defer></script>
 </body>
 </html>
