@@ -28,15 +28,7 @@ function emptyRuntimeStatus() {
 }
 
 function emptyRegistry() {
-  return {
-    revision: null,
-    source: null,
-    openclawVersion: null,
-    providers: [],
-    models: [],
-    agents: [],
-    updatedAt: null,
-  };
+  return { revision: null, source: null, openclawVersion: null, providers: [], models: [], agents: [], updatedAt: null };
 }
 
 function emptyRoutingProfiles() {
@@ -90,22 +82,24 @@ export class StateStore {
     this.maxEvents = maxEvents;
     this.runtimeStaleMs = runtimeStaleSeconds * 1000;
     this.routeDecisionTtlMs = routeDecisionTtlSeconds * 1000;
-    this.workerTaskStandardMaxMs = workerTaskStandardMaxSeconds * 1000;
-    this.workerTaskQuickMaxMs = workerTaskQuickMaxSeconds * 1000;
-    this.workerTaskLeaseMs = workerTaskLeaseSeconds * 1000;
-    this.workerTaskGraceMs = workerTaskGraceSeconds * 1000;
-    this.workerHeartbeatStaleMs = workerHeartbeatStaleSeconds * 1000;
-    this.workerMaxRecords = workerMaxRecords;
+    // Product contracts are hard ceilings even if StateStore is constructed
+    // directly without loadConfig().
+    this.workerTaskStandardMaxMs = Math.min(3600, Math.max(60, Number(workerTaskStandardMaxSeconds) || 3600)) * 1000;
+    this.workerTaskQuickMaxMs = Math.min(600, Math.max(30, Number(workerTaskQuickMaxSeconds) || 600)) * 1000;
+    this.workerTaskLeaseMs = Math.min(900, Math.max(30, Number(workerTaskLeaseSeconds) || 300)) * 1000;
+    this.workerTaskGraceMs = Math.min(180, Math.max(0, Number(workerTaskGraceSeconds) || 60)) * 1000;
+    this.workerHeartbeatStaleMs = Math.min(180, Math.max(10, Number(workerHeartbeatStaleSeconds) || 45)) * 1000;
+    this.workerMaxRecords = Math.min(20_000, Math.max(100, Number(workerMaxRecords) || 2000));
     this.now = now;
     this.listeners = new Set();
     this.writeChain = Promise.resolve();
     this.eventWritesSinceCompact = 0;
     this.state = {
-      version: 5,
+      version: 6,
       global: { mode: defaultMode, updatedAt: new Date(now()).toISOString(), actor: 'bootstrap' },
       projects: {},
       sessions: {},
-      tasks: {}, // one-shot mode overrides; retained for state compatibility
+      tasks: {},
       routeDecisions: {},
       workerTasks: {},
       registry: emptyRegistry(),
@@ -128,7 +122,7 @@ export class StateStore {
       this.state = {
         ...this.state,
         ...loaded,
-        version: 5,
+        version: 6,
         projects: loaded.projects || {},
         sessions: loaded.sessions || {},
         tasks: loaded.tasks || {},
@@ -147,8 +141,8 @@ export class StateStore {
           ...(loaded.runtime || {}),
           main: { ...emptyRuntimeStatus().main, ...(loaded.runtime?.main || {}) },
           reportedEnforcement: { ...emptyRuntimeStatus().reportedEnforcement, ...(loaded.runtime?.reportedEnforcement || loaded.runtime?.enforcement || {}) },
-          // Hook observations prove calls reached this controller process. Do
-          // not carry them across controller restarts.
+          // Hook observations prove calls reached this controller process and
+          // must never survive a controller restart.
           observedEnforcement: { ...emptyRuntimeStatus().observedEnforcement },
           workers: Array.isArray(loaded.runtime?.workers) ? loaded.runtime.workers : [],
         },
@@ -190,6 +184,18 @@ export class StateStore {
     });
   }
 
+  taskHeartbeatFresh(task, now = this.now()) {
+    const heartbeatAt = Date.parse(task?.progress?.heartbeatAt || task?.createdAt || 0);
+    return Boolean(heartbeatAt && now - heartbeatAt <= this.workerHeartbeatStaleMs);
+  }
+
+  taskScopeMatches(task, scope, id = '') {
+    if (scope === 'global') return true;
+    if (scope === 'project') return Boolean(id && task?.parent?.projectId === id);
+    if (scope === 'session') return Boolean(id && (task?.parent?.sessionId === id || task?.parent?.sessionKey === id));
+    return false;
+  }
+
   async purgeExpired() {
     const now = this.now();
     let changed = false;
@@ -210,8 +216,17 @@ export class StateStore {
     }
     for (const task of Object.values(this.state.workerTasks || {})) {
       if (terminalTaskStates.has(task.state)) continue;
-      if (Date.parse(task.lease?.hardDeadline || 0) <= now) {
+      const hardDeadline = Date.parse(task.lease?.hardDeadline || 0);
+      const leaseExpiry = Date.parse(task.lease?.expiresAt || 0);
+      const graceUntil = Date.parse(task.lease?.graceUntil || task.lease?.expiresAt || 0);
+      if (hardDeadline && hardDeadline <= now) {
         this.expireTaskInMemory(task, 'hard_deadline_exceeded');
+        changed = true;
+      } else if (!this.taskHeartbeatFresh(task, now) && graceUntil && graceUntil <= now) {
+        this.expireTaskInMemory(task, 'heartbeat_stale');
+        changed = true;
+      } else if (leaseExpiry && leaseExpiry <= now && graceUntil && graceUntil <= now) {
+        this.expireTaskInMemory(task, 'lease_and_grace_exhausted');
         changed = true;
       }
     }
@@ -254,16 +269,16 @@ export class StateStore {
     if (scope === 'session') this.state.sessions[id] = entry;
     if (scope === 'task') this.state.tasks[id] = entry;
 
-    // MAIN fences all currently active delegated body-work immediately. The
-    // child process may remain alive until OpenClaw's own timeout/stop path,
-    // but every subsequent tool call is denied by the owner/lease gate.
-    if (mode === 'main') {
+    // MAIN fences only the selected authority scope. A one-shot MAIN override
+    // applies to the next Main route and must never kill unrelated work.
+    if (mode === 'main' && scope !== 'task') {
       for (const task of Object.values(this.state.workerTasks)) {
-        if (!terminalTaskStates.has(task.state)) {
+        if (!terminalTaskStates.has(task.state) && this.taskScopeMatches(task, scope, id)) {
           task.state = 'cancelled';
+          task.ownerEpoch = Number(task.ownerEpoch || 1) + 1;
           task.updatedAt = new Date(now).toISOString();
-          task.terminal = { outcome: 'cancelled', endedAt: task.updatedAt, error: { code: 'mode_fenced', message: 'MAIN mode fenced delegated work' } };
-          this.pushTaskEvent(task, taskEvent('task.fenced', now, { reason: 'main_mode' }));
+          task.terminal = { outcome: 'cancelled', endedAt: task.updatedAt, error: { code: 'mode_fenced', message: `MAIN mode fenced ${scope} delegated work` } };
+          this.pushTaskEvent(task, taskEvent('task.fenced', now, { reason: 'main_mode', scope, scopeId: id || null }));
         }
       }
     }
@@ -422,13 +437,17 @@ export class StateStore {
     const modelRef = cleanText(profile.modelRef, 300) || cleanText(registeredAgent?.configuredModel, 300);
     const split = splitModelRef(modelRef);
     const modelEntry = registry.models.find((entry) => entry.ref === modelRef) || null;
-    const thinking = cleanText(profile.thinking, 40) || 'auto';
+    const requestedThinking = cleanText(profile.thinking, 40) || 'auto';
+    const supported = (modelEntry?.thinkingLevels || []).map((entry) => entry.id);
+    const thinking = requestedThinking === 'auto' || supported.includes(requestedThinking) ? requestedThinking : 'auto';
     return {
       modelRef,
       provider: split.provider || modelEntry?.provider || registeredAgent?.provider || null,
       model: split.model || modelEntry?.model || registeredAgent?.model || null,
       thinking,
-      thinkingLevels: modelEntry?.thinkingLevels || [],
+      // Upstream did not declare levels => only Auto is a valid UI/control
+      // plane choice. Never synthesize provider-specific reasoning tiers.
+      thinkingLevels: supported.length ? clone(modelEntry.thinkingLevels) : [{ id: 'auto', label: 'Auto' }],
       thinkingDefault: modelEntry?.thinkingDefault || registeredAgent?.thinkingDefault || null,
       source: profile.modelRef ? 'routing-profile' : 'openclaw-config',
     };
@@ -491,6 +510,7 @@ export class StateStore {
   expireTaskInMemory(task, reason) {
     const now = this.now();
     task.state = 'expired';
+    task.ownerEpoch = Number(task.ownerEpoch || 1) + 1;
     task.updatedAt = new Date(now).toISOString();
     task.terminal = { outcome: 'expired', endedAt: task.updatedAt, error: { code: reason, message: reason.replaceAll('_', ' ') } };
     this.pushTaskEvent(task, taskEvent('task.expired', now, { reason }));
@@ -549,9 +569,7 @@ export class StateStore {
 
   getWorkerTask(id) {
     const task = id ? this.state.workerTasks[id] : null;
-    if (!task) return null;
-    if (!terminalTaskStates.has(task.state) && Date.parse(task.lease?.hardDeadline || 0) <= this.now()) this.expireTaskInMemory(task, 'hard_deadline_exceeded');
-    return clone(task);
+    return task ? clone(task) : null;
   }
 
   listWorkerTasks({ limit = 100, activeOnly = false } = {}) {
@@ -602,7 +620,9 @@ export class StateStore {
     if (terminalTaskStates.has(task.state)) return { valid: false, reason: `worker_task_${task.state}`, task: clone(task) };
     const now = this.now();
     if (Date.parse(task.lease.hardDeadline) <= now) return { valid: false, reason: 'worker_hard_deadline_exceeded', task: clone(task) };
-    if (Date.parse(task.lease.expiresAt) <= now) return { valid: false, reason: 'worker_lease_expired', task: clone(task) };
+    if (!this.taskHeartbeatFresh(task, now)) return { valid: false, reason: 'worker_heartbeat_stale', task: clone(task) };
+    const graceEnd = Date.parse(task.lease.graceUntil || task.lease.expiresAt);
+    if (graceEnd <= now) return { valid: false, reason: 'worker_lease_expired', task: clone(task) };
     if (task.execution.agentId && agentId && task.execution.agentId !== agentId) return { valid: false, reason: 'worker_agent_mismatch', task: clone(task) };
     if (task.execution.runId && runId && task.execution.runId !== runId) return { valid: false, reason: 'worker_run_mismatch', task: clone(task) };
     if (task.execution.sessionId && sessionId && task.execution.sessionId !== sessionId) return { valid: false, reason: 'worker_session_mismatch', task: clone(task) };
@@ -670,7 +690,18 @@ export class StateStore {
   async rootTaskAction({ id, action, minutes = 5, actor = 'root-control' } = {}) {
     const task = this.state.workerTasks[id];
     if (!task) throw Object.assign(new Error('worker_task_not_found'), { statusCode: 404 });
-    if (action === 'cancel') return this.finishWorkerTask({ id, ownerEpoch: task.ownerEpoch, outcome: 'cancelled', error: { code: 'root_cancel', message: `${actor} cancelled task` } });
+    if (action === 'cancel') {
+      if (terminalTaskStates.has(task.state)) return clone(task);
+      const now = this.now();
+      task.state = 'cancelled';
+      task.ownerEpoch = Number(task.ownerEpoch || 1) + 1;
+      task.updatedAt = new Date(now).toISOString();
+      task.terminal = { outcome: 'cancelled', endedAt: task.updatedAt, error: { code: 'root_cancel', message: `${actor} cancelled task` } };
+      this.pushTaskEvent(task, taskEvent('task.cancelled', now, { reason: 'root_cancel', actor }));
+      await this.persistState();
+      await this.appendEvent({ type: 'worker.cancelled', taskId: id, role: task.role, runId: task.execution.runId, error: task.terminal.error });
+      return clone(task);
+    }
     if (action !== 'extend') throw Object.assign(new Error('invalid_task_action'), { statusCode: 400 });
     if (terminalTaskStates.has(task.state)) throw Object.assign(new Error('worker_task_terminal'), { statusCode: 409 });
     const now = this.now();
@@ -681,6 +712,9 @@ export class StateStore {
     task.lease.expiresAt = new Date(nextLease).toISOString();
     task.lease.graceUntil = new Date(Math.min(nextLease + this.workerTaskGraceMs, hardDeadline)).toISOString();
     task.lease.extensions = Number(task.lease.extensions || 0) + 1;
+    // Root extension is an emergency liveness assertion. It does not count as
+    // meaningful model progress but prevents an immediate stale-heartbeat gate.
+    task.progress.heartbeatAt = new Date(now).toISOString();
     task.updatedAt = new Date(now).toISOString();
     this.pushTaskEvent(task, taskEvent('task.root_extended', now, { actor, minutes: Math.ceil(extensionMs / 60_000) }));
     await this.persistState();
