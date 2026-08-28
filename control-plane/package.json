@@ -1,9 +1,9 @@
 {
   "name": "openclaw-delegation-control-plane",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "A hardened control plane for OpenClaw main/worker routing, policy enforcement and monitoring.",
+  "description": "A hardened OpenClaw-native control plane for autonomous Main/Worker/Verifier routing, durable task ownership, model routing and fail-closed tool enforcement.",
   "engines": {
     "node": ">=20"
   },
