@@ -52,10 +52,23 @@ export function loadConfig(env = process.env) {
     mainAllowPersistent: asBool(env.MAIN_ALLOW_PERSISTENT, false),
     taskOverrideDefaultTtlMinutes: asInt(env.TASK_OVERRIDE_DEFAULT_TTL_MINUTES, 30, 5, 240),
     taskOverrideMaxTtlMinutes: asInt(env.TASK_OVERRIDE_MAX_TTL_MINUTES, 120, 5, 1440),
-    maxEvents: asInt(env.MAX_EVENTS, 2000, 100, 100_000),
+    maxEvents: asInt(env.MAX_EVENTS, 4000, 100, 100_000),
     maxSseClients: asInt(env.MAX_SSE_CLIENTS, 8, 1, 100),
     runtimeStaleSeconds: asInt(env.RUNTIME_STALE_SECONDS, 90, 15, 3600),
-    routeDecisionTtlSeconds: asInt(env.ROUTE_DECISION_TTL_SECONDS, 900, 30, 86_400),
+
+    // Route bindings cover the complete standard task envelope. The binding is
+    // durable; this TTL is cleanup retention, not the worker lease itself.
+    routeDecisionTtlSeconds: asInt(env.ROUTE_DECISION_TTL_SECONDS, 3900, 600, 86_400),
+
+    // Durable Worker / Verifier lifecycle. Hard ceilings intentionally cannot
+    // be raised above the product contract from environment variables.
+    workerTaskStandardMaxSeconds: asInt(env.WORKER_TASK_STANDARD_MAX_SECONDS, 3600, 60, 3600),
+    workerTaskQuickMaxSeconds: asInt(env.WORKER_TASK_QUICK_MAX_SECONDS, 600, 30, 600),
+    workerTaskLeaseSeconds: asInt(env.WORKER_TASK_LEASE_SECONDS, 300, 30, 900),
+    workerTaskGraceSeconds: asInt(env.WORKER_TASK_GRACE_SECONDS, 60, 0, 180),
+    workerHeartbeatStaleSeconds: asInt(env.WORKER_HEARTBEAT_STALE_SECONDS, 45, 10, 180),
+    workerMaxRecords: asInt(env.WORKER_MAX_RECORDS, 2000, 100, 20_000),
+
     auditAllowedTools: asBool(env.AUDIT_ALLOWED_TOOLS, true),
     devInsecure: asBool(env.DEV_INSECURE, false),
     mainAgentIds: asCsv(env.MAIN_AGENT_IDS, ['main']),
@@ -99,6 +112,12 @@ export function validateConfig(config) {
   }
   if (config.taskOverrideDefaultTtlMinutes > config.taskOverrideMaxTtlMinutes) {
     errors.push('TASK_OVERRIDE_DEFAULT_TTL_MINUTES cannot exceed TASK_OVERRIDE_MAX_TTL_MINUTES');
+  }
+  if (config.workerTaskQuickMaxSeconds > config.workerTaskStandardMaxSeconds) {
+    errors.push('WORKER_TASK_QUICK_MAX_SECONDS cannot exceed WORKER_TASK_STANDARD_MAX_SECONDS');
+  }
+  if (config.workerTaskLeaseSeconds > config.workerTaskQuickMaxSeconds) {
+    warnings.push('WORKER_TASK_LEASE_SECONDS exceeds quick hard limit; leases will be clamped per task');
   }
   const roleEntries = [
     ...config.mainAgentIds.map((id) => [id, 'main']),
