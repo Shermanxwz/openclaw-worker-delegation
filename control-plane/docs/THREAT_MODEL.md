@@ -1,72 +1,91 @@
-# Threat model
+# Threat model — v0.3
 
 ## Security goal
 
-The control plane prevents an OpenClaw model from silently crossing the selected Main/Auto/Worker role boundary. It is designed to stop accidental or model-originated tool use before execution and to make the effective mode, model, routing, and blocked calls observable from a phone.
+The control plane prevents OpenClaw/model-originated execution from silently crossing the selected Main/Auto/Worker role boundary and prevents a Worker/Verifier from retaining tool authority after its durable task ownership, liveness or deadline is invalid.
+
+The design is fail-closed: inability to prove current route/ownership authority blocks tools rather than inferring permission from model intent.
 
 ## Trusted components
 
-- The VPS operating system and root administrator.
-- The OpenClaw Gateway process and installed `delegation-guard` plugin code.
-- The loopback connection between the plugin and controller.
-- The controller environment file, state directory, TLS private key, and agent token.
-- Nginx/Caddy configuration that keeps agent-only endpoints off the public Internet.
+- VPS operating system and root administrator.
+- OpenClaw Gateway process and installed `delegation-guard` plugin code.
+- Loopback connection between plugin and controller.
+- Controller state/environment, TLS private key and agent token.
+- Reverse-proxy/firewall configuration that keeps agent-only endpoints off the public Internet.
 
 ## Untrusted or partially trusted components
 
-- Model output and tool selections.
-- Worker-produced text, patches, commands, URLs, and logs.
+- Model output, prompts and tool selections.
+- Worker-produced text, patches, commands, URLs and logs.
 - Browser requests before authentication.
-- Event payloads and model/provider names sent by the runtime.
-- Network clients on the public Internet.
+- Runtime-supplied event content and human-readable provider/model names.
+- Public Internet clients.
 
 ## Enforced guarantees
 
 1. `before_tool_call` can terminally block a tool before OpenClaw executes it.
-2. The controller derives role from configured `agentId`; request bodies cannot elevate `main` by claiming `role=worker`.
-3. Real route decisions are bound to run, agent, and session where those identifiers are available.
-4. Worker mode gives main coordination tools only. Main cannot read files, browse, mutate, or execute body-work tools.
-5. Auto mode makes the router authoritative: a main-routed light task cannot spawn a worker; a worker-routed task cannot be duplicated by main.
-6. Main mode freezes already-running worker and verifier tool calls, not just future spawns.
-7. Main elevation requires explicit confirmation, password re-authentication, optional TOTP, and a bounded expiry. Persistent Main is opt-in: when `MAIN_ALLOW_PERSISTENT=true` is set on the controller, the browser may request a persistent Main entry using the distinct `ENABLE_MAIN_PERSISTENT` confirmation token. Otherwise the controller rejects `ttlMinutes: 0` for Main with `403 persistent_main_disabled`. A next-task override is stored server-side, consumed once for the named session, and cannot be asserted by an agent request body.
-8. `HARD` requires a fresh heartbeat plus actual route and tool-hook observations from the same plugin instance. A controller restart clears old observations.
-9. State writes are atomic and serialized; the audit file is bounded and compacted.
-10. Public reverse-proxy examples hide agent-only endpoints and expose only the authenticated browser surface.
+2. Role is derived from configured OpenClaw agent identity; request bodies cannot self-promote with `role`/`actor` fields.
+3. Authoritative Main routes are persistently bound to run/agent/session identity. Missing run/binding fails closed.
+4. Worker/Verifier tool calls require a durable `wrk_...` task, matching owner epoch, matching execution identity, fresh heartbeat, live lease/grace, and an unexpired hard deadline.
+5. Owner epoch revocation prevents an old Worker incarnation from regaining authority after root cancellation or mode fencing.
+6. WORKER makes Main coordinator/reviewer only for substantive user work. Main cannot silently duplicate Worker body-work with file/web/runtime tools.
+7. AUTO is conservative: tool/heavy/ambiguous work delegates rather than progressively widening Main authority.
+8. MAIN denies Worker spawning and fences existing delegated authority only within the selected global/project/session scope. One-shot MAIN does not kill unrelated already-running work.
+9. MAIN elevation requires explicit confirmation and browser credential re-authentication. Persistent MAIN is separately opt-in and uses a distinct confirmation token.
+10. The OpenClaw Registry is authoritative for selectable model refs. Non-Auto reasoning levels are accepted only when upstream declares them.
+11. Quick tasks are hard-clamped to 600 seconds total; standard tasks to 3600 seconds total. Configuration may lower but cannot raise these product ceilings.
+12. Ordinary heartbeat proves liveness only. Meaningful progress renews normal lease authority, never beyond the immutable hard deadline.
+13. `HARD` requires a fresh plugin heartbeat plus actual route and tool-hook observations from the same plugin instance. Controller restart clears old observations.
+14. State writes are atomic/serialized and audit/state retention is bounded.
+15. Public reverse-proxy examples expose browser endpoints only and hide agent/runtime control APIs.
+
+## Important execution boundary: logical cancellation vs process destruction
+
+Root-control cancel and MAIN fencing revoke the durable task owner epoch and therefore block all subsequent plugin-governed tools immediately. Native Worker spawn also receives a bounded OpenClaw `runTimeoutSeconds` matching the remaining hard deadline.
+
+The controller does **not** claim to be an operating-system process supervisor. If a Worker model call or non-tool runtime operation is already executing inside OpenClaw, revoking task authority does not guarantee instant physical thread/process destruction. The security guarantee is immediate revocation of subsequent governed tool authority plus bounded native OpenClaw timeout. A deployment that requires hard process kill semantics must enforce that at the OpenClaw/runtime or OS supervisor layer.
 
 ## Explicit non-goals and residual risks
 
-### Compromised host or Gateway
+### Compromised host, Gateway or controller
 
-Root, the `openclaw` Unix account, a compromised Gateway process, or an attacker who obtains `AGENT_INGEST_TOKEN` can bypass or impersonate the plugin. This project is not a host intrusion-prevention system.
+Root, the OpenClaw service account, a compromised Gateway/controller process, or an attacker holding `AGENT_INGEST_TOKEN` can bypass/impersonate the control plane. This project is not host intrusion prevention.
 
-### Shell side effects
+### Allowed shell side effects
 
-Tool policy filters tool names, not the behavior inside an allowed command. A Worker with `exec` can write files, access the network, run Git, or invoke another program even when `write`/`edit` are denied. Put Workers in an OpenClaw sandbox, disable elevated execution, and use exec approvals/allowlists when consequences matter.
+Tool policy filters authority to call a tool; it cannot introspect every side effect inside an allowed `exec`. A permitted Worker shell command can write files, access networks, invoke Git or launch programs. Use OpenClaw sandboxing, disabled elevation and suitable exec approvals/allowlists for high-consequence deployments.
 
-### Token exposure to workers
+### Credential exposure to Worker
 
-Do not place `OCWD_AGENT_TOKEN` in prompts, task briefs, workspace files, or generic shell profiles. A Worker that can read the Gateway process environment or its service credentials can steal it. Strong deployments isolate Worker execution from the Gateway host and credential paths.
+Never put `OCWD_AGENT_TOKEN` in prompts, task briefs, workspaces or generic shell profiles. A Worker that can inspect Gateway process credentials can steal it. Strong deployments isolate Worker execution from Gateway/service credentials.
 
 ### Hook timeout behavior
 
-OpenClaw stops awaiting a timed-out hook and continues the hook pipeline. Keep `before_tool_call` timeout larger than the plugin's HTTP request timeout. The example uses 5 seconds for the hook and 2.5 seconds for the controller request. Do not override the hook timeout below the request timeout.
+A timed-out host hook can undermine fail-closed expectations if OpenClaw continues execution. Keep OpenClaw hook timeouts greater than the plugin HTTP request timeout. The example uses a 2.5-second controller request timeout and 5-second critical hook timeouts.
 
-### Worker correctness
+### Model correctness and verifier correctness
 
-Delegation does not make Worker output correct. Verification, sandboxing, scoped workspaces, Git review, and human approval for high-impact operations remain necessary.
+Delegation/verification does not make generated work correct. The verifier is an independent evidence/review role, not a proof system. Use sandboxing, tests, Git review and human approval for high-impact operations.
+
+### Registry completeness
+
+The plugin mirrors provider/model information visible through the installed OpenClaw configuration/runtime interfaces and runtime-observed models. It does not claim to discover a provider's entire remote catalog independently of OpenClaw. The control plane therefore never invents models or reasoning tiers outside what OpenClaw exposes.
 
 ### Availability
 
-The plugin defaults to fully fail-closed when the controller is unreachable: all tool calls are blocked because the current mode cannot be proven. This protects integrity at the cost of availability. `failMode: "open"` is supported only for operators who deliberately accept that tradeoff.
+`failMode: "closed"` protects integrity at the cost of availability: controller loss blocks tools because current authority cannot be proven. `failMode: "open"` is intentionally available only as an operator-selected tradeoff and is not the recommended sealed-production posture.
 
 ## Recommended production posture
 
-- Controller bound to loopback only.
-- Trusted HTTPS certificate at the public reverse proxy.
-- Unique 14+ character passphrase and TOTP.
-- 32+ random-byte agent token, kept outside OpenClaw config and workspaces.
-- Main, Worker, and Verifier as distinct configured agent IDs.
-- Worker sandbox `mode: "all"`, session scope, no elevated execution.
-- Verifier read-only by default. Add `exec` only inside an isolated disposable sandbox.
+- Controller loopback-only.
+- Trusted HTTPS at the reverse proxy.
+- Unique 14+ character passphrase plus TOTP.
+- 32+ character random agent token outside prompts/config-visible workspaces.
+- Distinct Main, Worker and Verifier agent IDs.
+- Worker sandbox with no elevated execution and appropriately scoped workspace access.
+- Verifier read-only by default.
 - `failMode: "closed"`.
+- Hook timeouts larger than controller request timeout.
 - Regular `openclaw plugins inspect delegation-guard --runtime --json` checks.
+- Treat `HARD` as runtime evidence, not a static installation badge.
