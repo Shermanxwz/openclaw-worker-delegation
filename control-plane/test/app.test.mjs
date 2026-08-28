@@ -33,22 +33,42 @@ async function login(base, password, totp = '') {
 const browserHeaders = (auth) => ({ 'content-type': 'application/json', cookie: auth.cookie, 'x-csrf-token': auth.csrf });
 const agentHeaders = (token) => ({ 'content-type': 'application/json', authorization: `Bearer ${token}` });
 
-test('browser preview is separate and tool gate derives role from agentId', async (t) => {
+test('browser preview is separate and missing runtime binding fails closed for every role', async (t) => {
   const { app, base, password, token } = await startApp();
   t.after(() => app.close());
   const auth = await login(base, password);
   const preview = await fetch(`${base}/api/route-preview`, { method: 'POST', headers: browserHeaders(auth), body: JSON.stringify({ task: '修改代码并运行测试' }) });
   assert.equal(preview.status, 200);
 
-  const mainCheck = await fetch(`${base}/api/tool-check`, { method: 'POST', headers: agentHeaders(token), body: JSON.stringify({ agentId: 'main', tool: 'exec' }) });
-  assert.equal((await mainCheck.json()).allowed, false);
-  const workerCheck = await fetch(`${base}/api/tool-check`, { method: 'POST', headers: agentHeaders(token), body: JSON.stringify({ agentId: 'body-worker', tool: 'exec' }) });
-  assert.equal((await workerCheck.json()).allowed, true);
-  const spoof = await fetch(`${base}/api/tool-check`, { method: 'POST', headers: agentHeaders(token), body: JSON.stringify({ agentId: 'main', role: 'worker', tool: 'exec' }) });
-  assert.equal((await spoof.json()).allowed, false);
+  const statusAfterPreview = await (await fetch(`${base}/api/status`, { headers: { cookie: auth.cookie } })).json();
+  assert.equal(statusAfterPreview.metrics.routeToWorker, 0, 'route preview must not pollute real metrics');
 
-  const status = await (await fetch(`${base}/api/status`, { headers: { cookie: auth.cookie } })).json();
-  assert.equal(status.metrics.routeToWorker, 0, 'route preview must not pollute real metrics');
+  const missingMain = await fetch(`${base}/api/tool-check`, { method: 'POST', headers: agentHeaders(token), body: JSON.stringify({ agentId: 'main', tool: 'exec' }) });
+  const missingMainBody = await missingMain.json();
+  assert.equal(missingMainBody.allowed, false);
+  assert.equal(missingMainBody.reason, 'route_run_missing');
+
+  const missingWorker = await fetch(`${base}/api/tool-check`, { method: 'POST', headers: agentHeaders(token), body: JSON.stringify({ agentId: 'body-worker', tool: 'exec' }) });
+  const missingWorkerBody = await missingWorker.json();
+  assert.equal(missingWorkerBody.allowed, false);
+  assert.equal(missingWorkerBody.reason, 'route_run_missing');
+
+  const route = await fetch(`${base}/api/route`, {
+    method: 'POST', headers: agentHeaders(token),
+    body: JSON.stringify({ hook: 'before_prompt_build', instanceId: 'i-preview', agentId: 'main', runId: 'r-preview', sessionId: 's-preview', task: '修改代码并运行测试' }),
+  });
+  assert.equal(route.status, 200);
+  const mainBound = await fetch(`${base}/api/tool-check`, {
+    method: 'POST', headers: agentHeaders(token),
+    body: JSON.stringify({ hook: 'before_tool_call', instanceId: 'i-preview', agentId: 'main', runId: 'r-preview', sessionId: 's-preview', tool: 'exec' }),
+  });
+  assert.equal((await mainBound.json()).allowed, false, 'delegated Main remains coordinator-only');
+
+  const spoof = await fetch(`${base}/api/tool-check`, {
+    method: 'POST', headers: agentHeaders(token),
+    body: JSON.stringify({ agentId: 'main', role: 'worker', runId: 'r-preview', sessionId: 's-preview', tool: 'exec' }),
+  });
+  assert.equal((await spoof.json()).allowed, false);
 });
 
 test('route decision is bound to agent and session', async (t) => {
@@ -153,7 +173,6 @@ test('persistent main requires explicit ENABLE_MAIN_PERSISTENT confirmation when
   const auth = await login(base, password, code);
   const headers = browserHeaders(auth);
 
-  // ENABLE_MAIN with ttlMinutes=0 falls back to the bounded default TTL (not persistent)
   const wrongConfirmation = await fetch(`${base}/api/mode`, {
     method: 'PUT', headers,
     body: JSON.stringify({ scope: 'global', mode: 'main', confirmation: 'ENABLE_MAIN', reauthPassword: password, reauthTotp: code, ttlMinutes: 0 }),
@@ -163,7 +182,6 @@ test('persistent main requires explicit ENABLE_MAIN_PERSISTENT confirmation when
   assert.ok(wcBody.entry.expiresAt, 'time-bounded MAIN must keep expiresAt');
   assert.equal(wcBody.entry.persistent, undefined, 'ENABLE_MAIN must never yield persistent');
 
-  // Missing reauth must be rejected
   const noReauth = await fetch(`${base}/api/mode`, {
     method: 'PUT', headers,
     body: JSON.stringify({ scope: 'global', mode: 'main', confirmation: 'ENABLE_MAIN_PERSISTENT', ttlMinutes: 0 }),
@@ -171,7 +189,6 @@ test('persistent main requires explicit ENABLE_MAIN_PERSISTENT confirmation when
   assert.equal(noReauth.status, 403);
   assert.equal((await noReauth.json()).error, 'reauthentication_required');
 
-  // Correct path: persistent main is stored without expiresAt and marked persistent
   const ok = await fetch(`${base}/api/mode`, {
     method: 'PUT', headers,
     body: JSON.stringify({ scope: 'global', mode: 'main', confirmation: 'ENABLE_MAIN_PERSISTENT', reauthPassword: password, reauthTotp: code, ttlMinutes: 0 }),
@@ -182,13 +199,11 @@ test('persistent main requires explicit ENABLE_MAIN_PERSISTENT confirmation when
   assert.equal(body.entry.expiresAt, undefined);
   assert.equal(body.entry.persistent, true);
 
-  // /api/status surfaces persistent flag and shows it stays in effect
   const status = await (await fetch(`${base}/api/status`, { headers: { cookie: auth.cookie } })).json();
   assert.equal(status.resolvedMode.mode, 'main');
   assert.equal(status.resolvedMode.entry.persistent, true);
   assert.equal(status.resolvedMode.entry.expiresAt, undefined);
 
-  // Worker/auto re-select clears persistent flag
   const switchBack = await fetch(`${base}/api/mode`, {
     method: 'PUT', headers,
     body: JSON.stringify({ scope: 'global', mode: 'auto', ttlMinutes: 0 }),
@@ -196,7 +211,6 @@ test('persistent main requires explicit ENABLE_MAIN_PERSISTENT confirmation when
   assert.equal(switchBack.status, 200);
   assert.equal((await switchBack.json()).entry.persistent, undefined);
 
-  // Re-enable persistent main, then verify TTL=0 with normal confirmation still falls back to defaultTtl
   await fetch(`${base}/api/mode`, {
     method: 'PUT', headers,
     body: JSON.stringify({ scope: 'global', mode: 'main', confirmation: 'ENABLE_MAIN_PERSISTENT', reauthPassword: password, reauthTotp: code, ttlMinutes: 0 }),
@@ -214,8 +228,6 @@ test('persistent main requires explicit ENABLE_MAIN_PERSISTENT confirmation when
 test('static serving hides backup and dotfile requests with 404', async (t) => {
   const { app, base } = await startApp();
   t.after(() => app.close());
-  // The deny rule rejects these names before any filesystem lookup, so we
-  // don't need to plant any files; the rule is structural.
   const forbidden = [
     '/app.js.bak.9999',
     '/app.js.bak-9999',
@@ -236,7 +248,6 @@ test('static serving hides backup and dotfile requests with 404', async (t) => {
     const body = await response.json().catch(() => ({}));
     assert.equal(body.error, 'not_found');
   }
-  // Normal assets must still work.
   const allowed = ['/', '/app.js', '/styles.css', '/icon.svg', '/favicon-32.png'];
   for (const url of allowed) {
     const response = await fetch(`${base}${url}`);
