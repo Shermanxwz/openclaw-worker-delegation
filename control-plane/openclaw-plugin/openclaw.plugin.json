@@ -1,8 +1,8 @@
 {
   "id": "delegation-guard",
   "name": "Delegation Guard",
-  "description": "Connects OpenClaw routing and pre-tool hooks to the delegation control plane.",
-  "version": "0.2.0",
+  "description": "Native OpenClaw routing, model-registry, Worker lease and tool-gate bridge.",
+  "version": "0.3.0",
   "activation": {
     "onStartup": true
   },
@@ -20,10 +20,7 @@
       },
       "failMode": {
         "type": "string",
-        "enum": [
-          "closed",
-          "open"
-        ],
+        "enum": ["closed", "open"],
         "default": "closed"
       },
       "requestTimeoutMs": {
@@ -40,31 +37,18 @@
       },
       "mainAgentIds": {
         "type": "array",
-        "items": {
-          "type": "string"
-        },
-        "default": [
-          "main"
-        ]
+        "items": { "type": "string" },
+        "default": ["main"]
       },
       "workerAgentIds": {
         "type": "array",
-        "items": {
-          "type": "string"
-        },
-        "default": [
-          "body-worker",
-          "worker"
-        ]
+        "items": { "type": "string" },
+        "default": ["body-worker", "worker"]
       },
       "verifierAgentIds": {
         "type": "array",
-        "items": {
-          "type": "string"
-        },
-        "default": [
-          "verifier"
-        ]
+        "items": { "type": "string" },
+        "default": ["verifier"]
       },
       "allowRemoteController": {
         "type": "boolean",
