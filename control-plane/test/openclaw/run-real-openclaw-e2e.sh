@@ -136,7 +136,7 @@ cat > "$CONFIG" <<JSON
         "sandbox": { "mode": "off" },
         "tools": {
           "allow": ["read", "web_search", "web_fetch", "session_status"],
-          "deny": ["group:runtime", "write", "edit", "apply_patch"],
+          "deny": ["group:runtime", "write", "edit", "apply_patch", "sessions_spawn"],
           "elevated": { "enabled": false }
         }
       }
@@ -196,8 +196,16 @@ config.plugins.entries ||= {};
 config.plugins.entries['delegation-guard'] = {
   enabled: true,
   hooks: {
+    // OpenClaw 2026.7 requires this explicit opt-in for non-bundled plugins
+    // to receive conversation-sensitive model/run lifecycle hooks.
+    allowConversationAccess: true,
     allowPromptInjection: true,
-    timeouts: { before_prompt_build: 5000, before_tool_call: 5000 }
+    timeouts: {
+      before_model_resolve: 5000,
+      before_prompt_build: 5000,
+      before_agent_run: 5000,
+      before_tool_call: 5000
+    }
   },
   config: {
     controllerUrl: 'http://127.0.0.1:8787',
@@ -215,8 +223,15 @@ NODE
 
 openclaw config validate --json 2>&1 | tee "$LOGS/config-after-plugin.json"
 openclaw plugins inspect delegation-guard --runtime --json 2>&1 | tee "$LOGS/plugin-runtime-inspect.json"
+grep -q 'before_model_resolve' "$LOGS/plugin-runtime-inspect.json"
 grep -q 'before_prompt_build' "$LOGS/plugin-runtime-inspect.json"
+grep -q 'before_agent_run' "$LOGS/plugin-runtime-inspect.json"
 grep -q 'before_tool_call' "$LOGS/plugin-runtime-inspect.json"
+grep -q 'agent_end' "$LOGS/plugin-runtime-inspect.json"
+if grep -q 'blockedConversationHookNames.*before_model_resolve' "$LOGS/plugin-runtime-inspect.json"; then
+  echo 'before_model_resolve is unexpectedly blocked by OpenClaw host policy' >&2
+  exit 1
+fi
 
 openclaw gateway --port "$GATEWAY_PORT" --verbose >"$LOGS/gateway.log" 2>&1 & GATEWAY_PID=$!
 for ((i=0; i<300; i++)); do
@@ -256,7 +271,7 @@ assert_file_exists "$MARKERS/worker-exec-ok"
 
 # Main mode: Main exec is allowed and an existing Worker is frozen after switch.
 mode global '' main 15 > "$LOGS/mode-main.json"
-run_agent "33333333-3333-4333-8333-33333333333" OCWD_ALLOW_MAIN_EXEC "$LOGS/main-allow.json"
+run_agent "33333333-3333-4333-8333-333333333333" OCWD_ALLOW_MAIN_EXEC "$LOGS/main-allow.json"
 assert_file_exists "$MARKERS/main-exec-ok"
 
 mode global '' worker > "$LOGS/mode-worker-freeze.json"
@@ -294,6 +309,7 @@ cat > "$LOGS/summary.json" <<JSON
   "openclawVersion": "$(openclaw --version | tr -d '\n' | sed 's/"/\\"/g')",
   "nodeVersion": "$(node --version)",
   "pluginRuntimeHooks": true,
+  "conversationHooksEnabled": true,
   "autoMainExecBlocked": true,
   "realWorkerSpawnAndExecAllowed": true,
   "mainExecAllowed": true,
